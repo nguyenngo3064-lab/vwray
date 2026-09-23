@@ -67,6 +67,10 @@ enum NodeHealthState {
   DEGRADED
   OFFLINE
   UNKNOWN
+  /// Operator asked for no new sessions; existing sessions are allowed to finish.
+  DRAINING
+  /// Operator has taken the node out of service entirely.
+  MAINTENANCE
 }
 
 enum NodeProtocol {
@@ -194,6 +198,7 @@ enum SessionEndReason {
 
 enum AnomalyType {
   BANDWIDTH_SPIKE
+  BANDWIDTH_DROP
   UPLOAD_ANOMALY
   EXCESSIVE_CONNECTIONS
   AUTH_FAILURES
@@ -208,8 +213,14 @@ enum AnomalyStatus {
   DISMISSED
 }
 
+/// Notification and event severity. `INFO/LOW/MEDIUM/HIGH/CRITICAL` is the vocabulary
+/// the operator sees; `WARNING` is kept because it predates the scale and is still
+/// written by the traffic and quota paths.
 enum NotificationSeverity {
   INFO
+  LOW
+  MEDIUM
+  HIGH
   WARNING
   CRITICAL
 }
@@ -403,6 +414,8 @@ model VpnNode {
   quotas         Quota[]
   enforcement    GatewayPolicyState[]
   poolPolicy     NodePoolPolicy?
+  /// Node-scoped timeline entries (health changes, drain lifecycle, policy actions).
+  timeline       ConnectionEvent[]
 
   @@index([health])
   @@index([lastHeartbeatAt])
@@ -421,6 +434,9 @@ model NodeHealthSample {
   bandwidthMbps  Float?
   activeSessions Int?
   latencyMs      Float?
+  /// Round-trip jitter in ms. Nullable: an agent that cannot measure it reports nothing
+  /// and the console shows "Unavailable" rather than 0.
+  jitterMs       Float?
   packetLossPct  Float?
   source         DataSource @default(REAL)
 
@@ -516,6 +532,8 @@ model Device {
   dnsStats    DnsQueryStat[]
   anomalies   AnomalyEvent[]
   optRecords  OptimizationRecord[]
+  /// Connection timeline entries for this device ("why did it disconnect?").
+  timeline    ConnectionEvent[]
 
   @@index([approvalState])
   @@index([connectionStatus])
@@ -1264,4 +1282,456 @@ enum DnsAction {
 enum DnsListKind {
   BLOCKLIST
   ALLOWLIST
+}
+
+// ==========================================================================
+// Advanced network intelligence (added 2026-09-23)
+//
+// Everything below follows the same two rules as the models above:
+//   * a measurement that cannot be taken is NULL / an explicit "unavailable"
+//     marker, never 0 and never a guess;
+//   * every automated decision leaves an audit trail and can be explained from
+//     stored data alone (see `PolicyExecution.evidence` and `ConnectionEvent`).
+// ==========================================================================
+
+/// Whether a policy participates in evaluation. A DISABLED policy keeps its history.
+enum PolicyStatus {
+  ENABLED
+  DISABLED
+}
+
+/// The measurable inputs a policy condition may reference. Deliberately a closed set:
+/// a policy cannot read an arbitrary expression, only one of these named metrics.
+enum PolicyMetric {
+  /// Device/user/config/node quota consumption, 0-100+. NULL when no quota exists.
+  QUOTA_PERCENT
+  /// Absolute bytes used in the current quota period.
+  QUOTA_USED_BYTES
+  /// Bytes uploaded per hour, averaged over the condition's window.
+  DEVICE_UPLOAD_BYTES_PER_HOUR
+  /// Bytes downloaded per hour, averaged over the condition's window.
+  DEVICE_DOWNLOAD_BYTES_PER_HOUR
+  /// Observed throughput divided by the same device's trailing baseline.
+  TRAFFIC_SPIKE_FACTOR
+  /// Concurrent connections reported by the data plane.
+  DEVICE_CONNECTIONS
+  /// Reconnects inside the condition's window.
+  DEVICE_RECONNECTS
+  /// Failed authentications inside the condition's window.
+  AUTH_FAILURES
+  NODE_CPU_PERCENT
+  NODE_RAM_PERCENT
+  NODE_PACKET_LOSS_PCT
+  NODE_LATENCY_MS
+  NODE_ACTIVE_SESSIONS
+  /// Remaining session headroom as a percentage of `maxSessions`. NULL when the node
+  /// declares no capacity, because then headroom is undefined rather than 0.
+  NODE_SESSION_HEADROOM_PERCENT
+  /// 100 for ONLINE, 0 for anything else. Lets a policy branch on liveness without
+  /// pretending liveness is a continuous measurement.
+  NODE_ONLINE
+  /// Simulated budget consumption for the current period, 0-100+.
+  BUDGET_PERCENT
+  /// 100 when the device is QUOTA_EXCEEDED, 0 otherwise.
+  DEVICE_QUOTA_EXCEEDED
+  /// 100 when the device is BLOCKED, 0 otherwise.
+  DEVICE_BLOCKED
+}
+
+enum PolicyOperator {
+  GTE
+  GT
+  LTE
+  LT
+  EQ
+  NEQ
+}
+
+/// The closed registry of actions a policy may request. Each key maps to a typed,
+/// pre-written handler in `src/server/policy/actions.ts`. A policy can never express
+/// arbitrary code, a shell command, SQL or an arbitrary HTTP request.
+enum PolicyActionKey {
+  NOTIFY
+  QUOTA_WARNING
+  DISCONNECT_SESSION
+  BLOCK_DEVICE_RECONNECT
+  MARK_NODE_DEGRADED
+  LOWER_NODE_ROUTING_PRIORITY
+  STOP_NEW_ASSIGNMENTS
+  CREATE_ANOMALY_EVENT
+  APPLY_OPTIMIZATION_PROFILE
+  DRAIN_NODE
+  SET_DEVICE_SECURITY_REVIEW
+  REQUEST_REPORT
+}
+
+/// What a policy is evaluated against on each tick.
+enum PolicyTargetKind {
+  DEVICE
+  USER
+  NODE
+  CONFIG
+  SYSTEM
+}
+
+enum PolicyExecutionResult {
+  /// The condition matched and the action ran.
+  APPLIED
+  /// The condition matched but the action was already satisfied (no-op).
+  NO_OP
+  /// The condition matched but the per-target cooldown suppressed the action.
+  COOLDOWN
+  /// The condition matched but an operator override (or dry-run mode) suppressed it.
+  SUPPRESSED
+  /// The metric could not be measured, so no decision could be made.
+  UNMEASURABLE
+  /// The condition did not match.
+  NO_MATCH
+  FAILED
+}
+
+/// Safe, idempotent maintenance jobs. Each handler lives in
+/// `src/server/automation/jobs.ts` and reports what it did.
+enum AutomationJobKind {
+  QUOTA_PERIOD_RESET
+  TRAFFIC_AGGREGATE_ROLLUP
+  NODE_HEALTH_CHECK
+  ANOMALY_SWEEP
+  POLICY_EVALUATION
+  EXPIRED_CREDENTIAL_CLEANUP
+  EXPIRED_CONFIG_CLEANUP
+  RETENTION_TRAFFIC_SAMPLES
+  RETENTION_AUDIT_LOGS
+  RETENTION_NODE_HEALTH
+  RETENTION_DNS_STATS
+  RETENTION_CONNECTION_EVENTS
+  RETENTION_POLICY_EXECUTIONS
+  RETENTION_AUTOMATION_RUNS
+  BILLING_PERIOD_ROLLOVER
+  REPORT_GENERATION
+  RECEIPT_ISSUE
+}
+
+enum AutomationRunStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+  SKIPPED
+}
+
+/// The events a device/node timeline is built from. Every entry is written from data
+/// the platform actually observed; the timeline is never "narrated".
+enum ConnectionEventType {
+  DEVICE_REGISTERED
+  DEVICE_APPROVED
+  DEVICE_REJECTED
+  DEVICE_BLOCKED
+  DEVICE_UNBLOCKED
+  DEVICE_CONNECTED
+  DEVICE_DISCONNECTED
+  DEVICE_UPDATED
+  NODE_CHANGED
+  NODE_HEALTH_CHANGED
+  NODE_DRAIN_STARTED
+  NODE_DRAIN_COMPLETED
+  NODE_MAINTENANCE_STARTED
+  NODE_MAINTENANCE_ENDED
+  CONFIG_CREATED
+  CONFIG_REVOKED
+  CONFIG_ROLLED_BACK
+  CREDENTIAL_CREATED
+  CREDENTIAL_ROTATED
+  CREDENTIAL_REVOKED
+  SESSION_STARTED
+  SESSION_ENDED
+  SESSION_REVOKED
+  QUOTA_WARNING
+  QUOTA_EXCEEDED
+  QUOTA_RESET
+  QUOTA_CHANGED
+  OPTIMIZATION_ENABLED
+  OPTIMIZATION_CHANGED
+  POLICY_TRIGGERED
+  AUTOMATION_RUN
+  ANOMALY_DETECTED
+  SECURITY_EVENT
+  BUDGET_THRESHOLD
+  RECEIPT_CREATED
+  REPORT_GENERATED
+}
+
+/// How a timeline entry was caused. Mirrors `ActorType` but stays explicit so a
+/// timeline row is readable without a join to the audit table.
+enum TimelineActor {
+  USER
+  SYSTEM
+  GATEWAY
+  POLICY
+  AUTOMATION
+}
+
+// ------------------------------------------------------------- policies ------
+
+/// A declarative IF/THEN rule.
+///
+/// `condition` and `action` are JSON documents validated by Zod at write time against
+/// the closed vocabularies above (`src/server/policy/schema.ts`), and re-validated on
+/// read. That is intentional: the database cannot enforce the shape, so the engine
+/// treats a stored policy as untrusted input rather than assuming it is well formed.
+model Policy {
+  id          String       @id @default(cuid())
+  name        String
+  description String?
+  status      PolicyStatus @default(ENABLED)
+  /// Lower runs first. Ties are broken by `createdAt`.
+  priority    Int          @default(100)
+
+  targetKind PolicyTargetKind @default(DEVICE)
+
+  /// `{ metric, operator, value, windowSeconds?, baselineWindowSeconds? }`
+  condition Json
+  /// `{ key, params }` - see the `PolicyActionKey` registry.
+  action Json
+
+  /// Minimum seconds between two APPLIED executions of this policy for one target.
+  /// Prevents a threshold-hugging metric from firing on every tick.
+  cooldownSeconds Int @default(600)
+
+  /// When true the policy evaluates and records what it WOULD do, but acts on nothing.
+  dryRun Boolean @default(false)
+
+  /// Operator override. While set and in the future, the policy is evaluated but its
+  /// action is suppressed, and the execution row records who overrode it and why.
+  overrideUntil  DateTime?
+  overrideById   String?
+  overrideLabel  String?
+  overrideReason String?
+
+  lastEvaluatedAt DateTime?
+  lastTriggeredAt DateTime?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  executions PolicyExecution[]
+
+  @@index([status, priority])
+  @@index([targetKind])
+  @@map("policy")
+}
+
+/// One evaluation of one policy against one target. This table is the policy audit
+/// trail AND the evidence behind the console's "WHY?" view: `observed`, `threshold`,
+/// and `evidence` are what the decision was actually made from.
+model PolicyExecution {
+  id        String   @id @default(cuid())
+  policyId  String
+  policy    Policy   @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  evaluatedAt DateTime @default(now())
+
+  result PolicyExecutionResult
+
+  targetKind PolicyTargetKind
+  /// Polymorphic on purpose: a policy may target a device, user, node or config, and a
+  /// nullable FK per kind would be four half-empty columns.
+  targetId   String?
+  targetLabel String?
+
+  metric    String
+  operator  String
+  /// NULL when the metric could not be measured. The console shows "Unavailable"
+  /// and the execution result is UNMEASURABLE - never a comparison against 0.
+  observed  Float?
+  threshold Float?
+
+  actionKey     PolicyActionKey?
+  actionPayload Json?
+
+  /// Structured reason, e.g. `{ quotaId, usedBytes, limitBytes, percent }`.
+  evidence Json?
+  message  String
+
+  /// Suppression bookkeeping, so a suppressed action is still auditable.
+  suppressed        Boolean @default(false)
+  suppressionReason String?
+  dryRun            Boolean @default(false)
+
+  /// Collapses repeated identical outcomes so a noisy metric cannot flood the table.
+  dedupeKey String?
+
+  @@unique([dedupeKey])
+  @@index([policyId, evaluatedAt])
+  @@index([targetId, evaluatedAt])
+  @@index([evaluatedAt])
+  @@index([result])
+  @@map("policy_execution")
+}
+
+// ----------------------------------------------------------- automation ------
+
+/// A scheduled maintenance job. The scheduler is in-process and lease-guarded so two
+/// replicas cannot run the same job simultaneously (see AUTOMATION.md).
+model AutomationJob {
+  id      String            @id @default(cuid())
+  name    String            @unique
+  kind    AutomationJobKind
+  enabled Boolean           @default(true)
+
+  /// Fixed interval cadence in seconds. Minimum enforced by the registry.
+  intervalSeconds Int      @default(3600)
+  nextRunAt       DateTime
+  /// Held while a run is in flight; a crashed replica's lease expires and the job
+  /// becomes runnable again instead of being stuck forever.
+  leaseUntil      DateTime?
+
+  lastRunAt    DateTime?
+  lastStatus   AutomationRunStatus?
+  lastSummary  String?
+  failureCount Int                    @default(0)
+
+  /// Per-job configuration validated against the job registry.
+  config Json?
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  runs AutomationRun[]
+
+  @@index([enabled, nextRunAt])
+  @@index([kind])
+  @@map("automation_job")
+}
+
+/// Bookkeeping for one automation execution. Every run also writes an `AuditLog` row,
+/// because the brief requires automation to be auditable; this row carries the detail.
+model AutomationRun {
+  id     String        @id @default(cuid())
+  jobId  String
+  job    AutomationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  startedAt  DateTime             @default(now())
+  finishedAt DateTime?
+  status     AutomationRunStatus   @default(RUNNING)
+
+  summary       String?
+  affectedCount Int     @default(0)
+  detail        Json?
+  error         String?
+
+  @@index([jobId, startedAt])
+  @@index([status, startedAt])
+  @@map("automation_run")
+}
+
+// --------------------------------------------------------------- budget ------
+
+/// SIMULATED spend ceiling. A budget never disconnects anything by itself: it raises
+/// notifications at 50/75/90/100% and, only if a policy explicitly says so, that
+/// policy may act. See BILLING_SIMULATION.md.
+model Budget {
+  id          String    @id @default(cuid())
+  name        String
+  scope       CostScope @default(SYSTEM)
+  scopeRefId  String?
+  currency    String    @default("VND")
+
+  amountLimit Decimal @db.Decimal(18, 4)
+
+  period         BillingPeriod @default(MONTHLY)
+  periodStartDay Int           @default(1)
+  /// Optional hard stop for the simulated period.
+  periodStart    DateTime?
+  periodEnd      DateTime?
+
+  enabled Boolean @default(true)
+
+  /// Earliest warning threshold already raised for the current period, so a restart
+  /// cannot replay the same warning. Cleared on period rollover.
+  warnedAt50  DateTime?
+  warnedAt75  DateTime?
+  warnedAt90  DateTime?
+  warnedAt100 DateTime?
+  lastEvaluatedAt DateTime?
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  events BudgetEvent[]
+
+  @@unique([scope, scopeRefId, name])
+  @@index([enabled])
+  @@map("budget")
+}
+
+/// One budget threshold crossing, so the console can show the history of a period
+/// instead of only its current state.
+model BudgetEvent {
+  id       String   @id @default(cuid())
+  budgetId String
+  budget   Budget   @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+
+  raisedAt     DateTime             @default(now())
+  thresholdPct Int
+  observedPct  Float
+  spentAmount  Decimal              @db.Decimal(18, 4)
+  limitAmount  Decimal              @db.Decimal(18, 4)
+  projectedAmount Decimal?           @db.Decimal(18, 4)
+  severity     NotificationSeverity
+  /// Which recorded cost records / aggregates the figure came from.
+  evidence     Json?
+  dedupeKey    String?
+
+  @@unique([dedupeKey])
+  @@index([budgetId, raisedAt])
+  @@map("budget_event")
+}
+
+// ------------------------------------------------------------- timeline ------
+
+/// Per-device and per-node connection timeline. This is the read model the console
+/// searches, and the source the explainability engine uses for "WHY?".
+model ConnectionEvent {
+  id String              @id @default(cuid())
+  ts DateTime            @default(now())
+  type ConnectionEventType
+
+  deviceId String?
+  device   Device? @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  userId   String?
+  nodeId   String?
+  node     VpnNode? @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  sessionId String?
+
+  /// Traffic attributed to this event when the event reports traffic. NULL means the
+  /// event carries no byte figure - not zero bytes.
+  bytesUp   BigInt?
+  bytesDown BigInt?
+
+  /// Factual reason, derived at write time from stored state. Never a narrative.
+  reason String?
+
+  actor TimelineActor   @default(SYSTEM)
+  actorId    String?
+  actorLabel String?
+
+  severity NotificationSeverity @default(INFO)
+  /// Structured context (policy id + observed/threshold, quota figures, node health, ...).
+  metadata Json?
+
+  /// Collapses repeated identical events (e.g. a flapping reconnect) so the timeline
+  /// stays readable without losing the fact that something repeated.
+  dedupeKey String?
+  repeatCount Int @default(1)
+
+  @@unique([dedupeKey])
+  @@index([deviceId, ts])
+  @@index([nodeId, ts])
+  @@index([type, ts])
+  @@index([ts])
+  @@index([userId, ts])
+  @@map("connection_event")
 }

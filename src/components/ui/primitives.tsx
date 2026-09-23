@@ -116,18 +116,24 @@ export function Unavailable({ label }: { label?: string }) {
   return <span className="unavailable">{label ?? "Unavailable"}</span>;
 }
 
+/**
+ * State chip. Accepts either a child label or a `label` prop so a caller can render
+ * a plain state string without wrapping it in JSX.
+ */
 export function StatusPill({
   tone,
+  label,
   children,
   title,
 }: {
   tone?: Tone;
-  children: ReactNode;
+  label?: string;
+  children?: ReactNode;
   title?: string;
 }) {
   return (
     <span className={`status ${tone ? toneClass(tone) : ""}`} title={title}>
-      {children}
+      {children ?? label}
     </span>
   );
 }
@@ -161,33 +167,39 @@ export function UsageBar({ percent, tone }: { percent: number | null; tone?: Ton
   );
 }
 
+/** `error` is accepted as a caller-friendly alias for the `danger` tone. */
+export type CalloutKind = "error" | "warning" | "info" | "danger" | "success";
+
 export function Callout({
+  kind,
   tone,
   title,
   children,
 }: {
+  kind?: CalloutKind;
   tone?: Tone;
-  title?: string;
+  title?: ReactNode;
   children: ReactNode;
 }) {
+  const tone2: Tone | undefined = tone ?? (kind === "error" ? "danger" : kind);
   const text =
-    tone === "success"
+    tone2 === "success"
       ? "text-success"
-      : tone === "warning"
+      : tone2 === "warning"
         ? "text-warning"
-        : tone === "danger"
+        : tone2 === "danger"
           ? "text-danger"
-          : tone === "info"
+          : tone2 === "info"
             ? "text-info"
             : "text-muted";
   const border =
-    tone === "success"
+    tone2 === "success"
       ? "border-success/40"
-      : tone === "warning"
+      : tone2 === "warning"
         ? "border-warning/40"
-        : tone === "danger"
+        : tone2 === "danger"
           ? "border-danger/40"
-          : tone === "info"
+          : tone2 === "info"
             ? "border-info/40"
             : "border-border";
   return (
@@ -378,68 +390,6 @@ export function Field({
       </label>
       {children}
       {hint ? <p className="text-[11.5px] leading-relaxed text-faint">{hint}</p> : null}
-
-export function StatusPill({ tone, label, children }: { tone?: Tone; label?: string; children?: ReactNode }) {
-  return (
-    <span className={`status ${toneClass(tone ?? "neutral")} inline-flex items-center gap-1 px-1.5 py-0.5 text-[10.5px] uppercase tracking-wide`}>
-      {children ?? label}
-    </span>
-  );
-}
-
-export function Callout({ kind, title, children }: { kind: "error" | "warning" | "info"; title?: string; children?: ReactNode }) {
-  const borderColor = kind === "error" ? "border-danger/30" : kind === "warning" ? "border-warning/30" : "border-info/30";
-  const bgColor = kind === "error" ? "bg-danger/5" : kind === "warning" ? "bg-warning/5" : "bg-info/5";
-  return (
-    <div className={`panel ${borderColor} ${bgColor} p-3`}>
-      {title ? <div className="text-[11px] font-medium text-muted mb-1">{title}</div> : null}
-      {children ? <div className="text-[12px] text-muted">{children}</div> : null}
-    </div>
-  );
-}
-
-export function UsageBar({ value, max, label, tone }: { value: number; max: number; label?: string; tone?: Tone }) {
-  const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] text-muted">{label ?? `${value.toLocaleString()} / ${max.toLocaleString()}`}</span>
-        <span className={`text-[11px] ${tone ? toneClass(tone) : "text-muted"}`}>{pct.toFixed(1)}%</span>
-      </div>
-      <div className="h-1.5 bg-canvas overflow-hidden rounded-full">
-        <div className={`h-full rounded-full ${tone ? toneClass(tone) : "bg-muted"}`} style={{ width: `${pct}%` }} />
-      </div>
-    </div>
-  );
-}
-
-export function EmptyState({ title, message }: { title: string; message?: string }) {
-  return (
-    <div className="py-6 text-center">
-      <div className="text-[13px] font-medium text-primary">{title}</div>
-      {message ? <div className="text-[12px] text-muted mt-1.5 leading-relaxed">{message}</div> : null}
-    </div>
-  );
-}
-
-export function LoadingState({ subject, rows }: { subject?: string; rows?: number }) {
-  const height = rows ? `min-h-[calc(${rows} * 2.75rem + 0.5rem)]` : "min-h-[3rem]";
-  return (
-    <div className={`space-y-1 ${height}`}>
-      <div className="text-[11.5px] text-muted">Loading {subject ?? "data"}…</div>
-    </div>
-  );
-}
-
-export function ErrorState({ subject, onRetry }: { subject?: string; onRetry?: () => void }) {
-  return (
-    <div className="space-y-2">
-      <div className="text-[11.5px] text-danger">Could not load {subject ?? "data"}.</div>
-      {onRetry ? <Button onClick={onRetry}>Retry</Button> : null}
-    </div>
-  );
-}
-
     </div>
   );
 }

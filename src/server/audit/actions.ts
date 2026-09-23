@@ -41,7 +41,13 @@ export type AuditAction =
   | "node.removed"
   | "node.token_rotated"
   | "node.draining"
+  | "node.drain_started"
+  | "node.drain_completed"
+  | "node.drain_aborted"
   | "node.heartbeat"
+  | "node.maintenance_started"
+  | "node.maintenance_ended"
+  | "node.routing_priority_changed"
   | "node.offline"
   | "node.recovered"
   | "quota.created"
@@ -70,7 +76,30 @@ export type AuditAction =
   | "traffic.ingested"
   | "traffic.mock_ingested"
   | "maintenance.retention_run"
-  | "notification.read";
+  | "notification.read"
+  // -------------------------------------------------- policy engine ---------
+  | "policy.created"
+  | "policy.updated"
+  | "policy.deleted"
+  | "policy.enabled"
+  | "policy.disabled"
+  | "policy.triggered"
+  | "policy.simulated"
+  | "policy.override_set"
+  | "policy.override_cleared"
+  // -------------------------------------------------- automation ------------
+  | "automation.job_created"
+  | "automation.job_updated"
+  | "automation.job_disabled"
+  | "automation.job_run"
+  // -------------------------------------------------- budget (simulated) ----
+  | "budget.created"
+  | "budget.updated"
+  | "budget.deleted"
+  | "budget.threshold"
+  // -------------------------------------------------- reporting -------------
+  | "report.generated"
+  | "export.generated";
 
 export interface AuditActor {
   type: ActorType;

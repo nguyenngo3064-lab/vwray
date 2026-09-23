@@ -470,7 +470,10 @@ export async function createReceipt(
     : null;
 
   await record({
-    actor: { type: "USER", id: input.actorId, label: input.actorLabel },
+    actor:
+      input.actorLabel === "automation" && input.actorId === "00000000-0000-0000-0000-000000000000"
+        ? { type: "SYSTEM", id: null, label: "automation" }
+        : { type: "USER", id: input.actorId, label: input.actorLabel },
     action: "receipt.created",
     resource: "receipt",
     resourceId: created.id,
@@ -491,7 +494,28 @@ export async function createReceipt(
     },
   });
 
-  return { receipt: await getReceipt(created.id), costRecordId };
+  const receiptView = await getReceipt(created.id);
+
+  // Receipts are domain facts: the timeline keeps one entry per receipt so the
+  // connection/device history can answer "when was this billed?" without joining billing.
+  try {
+    const { publishDomain } = await import("@/server/events/dispatch");
+    await publishDomain("receipt.created", {
+      ts: Date.now(),
+      receiptId: receiptView.id,
+      receiptNumber: receiptView.receiptNumber,
+      customerName: receiptView.customerName,
+      deviceId: receiptView.deviceId,
+      currency: receiptView.currency,
+      simulatedTotal: String(receiptView.simulatedTotal),
+      verificationHash: receiptView.verificationHash,
+      source: receiptView.source,
+    });
+  } catch {
+    // A receipt without a timeline entry is still a valid receipt.
+  }
+
+  return { receipt: receiptView, costRecordId };
 }
 
 export interface VerificationResult {

@@ -22,6 +22,7 @@ const bodySchema = z.object({
   bandwidthMbps: z.number().min(0).max(1_000_000).optional(),
   activeSessions: z.number().int().min(0).max(1_000_000).optional(),
   latencyMs: z.number().min(0).max(600_000).optional(),
+  jitterMs: z.number().min(0).max(600_000).optional(),
   packetLossPct: z.number().min(0).max(100).optional(),
   version: z.string().max(40).optional(),
   agentVersion: z.string().max(40).optional(),

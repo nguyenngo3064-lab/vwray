@@ -21,7 +21,22 @@ import { notify } from "@/server/notifications/service";
  * so the UI can never show a silently-stale node as healthy.
  */
 
-export type DisplayHealth = "ONLINE" | "DEGRADED" | "OFFLINE" | "UNKNOWN";
+/**
+ * Health state a node can present to operators and to the route selector.
+ *
+ * `DRAINING` and `MAINTENANCE` are OPERATIONAL states an operator asked for; they are
+ * deliberately not "healthy" claims and they are only ever reported while the node is
+ * still reporting normally. An outage is never hidden behind them: if the heartbeat has
+ * gone stale the state stays `OFFLINE`, because "we asked it to drain" is not evidence
+ * that the box is still up.
+ */
+export type DisplayHealth =
+  | "ONLINE"
+  | "DEGRADED"
+  | "OFFLINE"
+  | "UNKNOWN"
+  | "DRAINING"
+  | "MAINTENANCE";
 
 export function deriveHealth(input: {
   lastHeartbeatAt: Date | null;
@@ -29,13 +44,22 @@ export function deriveHealth(input: {
   maintenance: boolean;
   draining: boolean;
 }): DisplayHealth {
-  if (!input.lastHeartbeatAt) return "UNKNOWN";
-  const ageMs = Date.now() - input.lastHeartbeatAt.getTime();
-  if (ageMs > input.staleSeconds * 2 * 1000) return "OFFLINE";
-  if (ageMs > input.staleSeconds * 1000) return "DEGRADED";
-  void input.maintenance;
-  void input.draining;
-  return "ONLINE";
+  // Heartbeat first: liveness is the only thing that can prove a node is down, and no
+  // operator intent may override a real "it stopped reporting".
+  let heartbeatState: DisplayHealth;
+  if (!input.lastHeartbeatAt) {
+    heartbeatState = "UNKNOWN";
+  } else {
+    const ageMs = Date.now() - input.lastHeartbeatAt.getTime();
+    if (ageMs > input.staleSeconds * 2 * 1000) heartbeatState = "OFFLINE";
+    else if (ageMs > input.staleSeconds * 1000) heartbeatState = "DEGRADED";
+    else heartbeatState = "ONLINE";
+  }
+
+  if (heartbeatState === "OFFLINE") return "OFFLINE";
+  if (input.maintenance) return "MAINTENANCE";
+  if (input.draining) return "DRAINING";
+  return heartbeatState;
 }
 
 export async function listNodes() {
@@ -272,6 +296,7 @@ export async function applyHeartbeat(
     bandwidthMbps?: number | null;
     activeSessions?: number | null;
     latencyMs?: number | null;
+    jitterMs?: number | null;
     packetLossPct?: number | null;
     version?: string | null;
     agentVersion?: string | null;
@@ -306,6 +331,7 @@ export async function applyHeartbeat(
       bandwidthMbps: input.bandwidthMbps ?? null,
       activeSessions: input.activeSessions ?? null,
       latencyMs: input.latencyMs ?? null,
+      jitterMs: input.jitterMs ?? null,
       packetLossPct: input.packetLossPct ?? null,
       source: options?.source ?? "REAL",
     },

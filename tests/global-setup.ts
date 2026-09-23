@@ -19,7 +19,9 @@ export default async function globalSetup(): Promise<void> {
     throw new Error("TEST_DATABASE_URL or DATABASE_URL must be set to run the test suite.");
   }
 
-  execFileSync("npx", ["prisma", "migrate", "reset", "--force", "--skip-seed"], {
+  // NOTE: Prisma 7 removed `--skip-seed` from `migrate reset` (seeding is configured
+  // in prisma.config.ts, which declares no seed command here), so the flag is gone.
+  execFileSync("npx", ["prisma", "migrate", "reset", "--force"], {
     stdio: "pipe",
     env: {
       ...process.env,

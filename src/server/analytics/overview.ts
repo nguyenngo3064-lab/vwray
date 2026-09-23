@@ -60,7 +60,7 @@ export interface OverviewResult {
     id: string;
     nodeId: string;
     name: string;
-    health: "ONLINE" | "DEGRADED" | "OFFLINE" | "UNKNOWN";
+    health: "ONLINE" | "DEGRADED" | "OFFLINE" | "UNKNOWN" | "DRAINING" | "MAINTENANCE";
     activeSessions: number;
     cpuPercent: number | null;
     ramPercent: number | null;

@@ -1,5 +1,6 @@
 import "server-only";
 import { EventEmitter } from "node:events";
+import type { NotificationSeverity } from "@prisma/client";
 
 /**
  * Realtime event bus.
@@ -60,7 +61,7 @@ export interface RealtimeEventMap {
   notification: {
     ts: number;
     id: string;
-    severity: "INFO" | "WARNING" | "CRITICAL";
+    severity: NotificationSeverity;
     type: string;
     title: string;
     body: string;
@@ -82,7 +83,7 @@ export interface RealtimeEventMap {
   "node.update": {
     ts: number;
     nodeId: string;
-    health: "ONLINE" | "DEGRADED" | "OFFLINE" | "UNKNOWN";
+    health: "ONLINE" | "DEGRADED" | "OFFLINE" | "UNKNOWN" | "DRAINING" | "MAINTENANCE";
     lastHeartbeatAt: number | null;
   };
 }

@@ -220,6 +220,20 @@ async function raiseWarning(
   });
 
   const percent = evaluation.percent ?? 0;
+  const thresholdPct = evaluation.state === "WARNED_90" ? 90 : 80;
+  const { publishDomain } = await import("@/server/events/dispatch");
+  await publishDomain("quota.warning", {
+    ts: now.getTime(),
+    quotaId: quota.id,
+    scope: evaluation.scope,
+    scopeRefId: evaluation.scopeRefId,
+    deviceId,
+    deviceLabel: evaluation.label,
+    thresholdPct,
+    usedBytes: evaluation.usedBytes.toString(),
+    limitBytes: evaluation.limitBytes.toString(),
+    percent: evaluation.percent,
+  });
   await notify({
     type: "quota.warning",
     severity: evaluation.state === "WARNED_90" ? "WARNING" : "INFO",
@@ -338,6 +352,28 @@ export async function enforceHardLimit(input: {
     percent: evaluation.percent,
     usedBytes: evaluation.usedBytes.toString(),
     limitBytes: evaluation.limitBytes.toString(),
+  });
+
+  // Domain event: drives the timeline (WHY?), the realtime bridge and the audit record.
+  // Closed sessions were counted inside the transaction; recount cheaply here so the
+  // event carries the real number rather than a quarter-estimate.
+  const closedSessions = await prisma.vpnSession.count({
+    where: { deviceId, endedAt: now },
+  });
+  const { publishDomain } = await import("@/server/events/dispatch");
+  await publishDomain("quota.exceeded", {
+    ts: now.getTime(),
+    quotaId,
+    scope: evaluation.scope,
+    scopeRefId: evaluation.scopeRefId,
+    deviceId,
+    deviceLabel: evaluation.label,
+    thresholdPct: 100,
+    usedBytes: evaluation.usedBytes.toString(),
+    limitBytes: evaluation.limitBytes.toString(),
+    percent: evaluation.percent,
+    sessionsClosed: closedSessions,
+    reconnectBlocked: true,
   });
 
   await notify({

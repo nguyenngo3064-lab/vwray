@@ -16,7 +16,13 @@ import { UNAVAILABLE } from "@/lib/format/units";
 export type ApprovalState = "PENDING" | "APPROVED" | "REJECTED" | "BLOCKED";
 export type ConnectionStatus = "ONLINE" | "OFFLINE" | "CONNECTING" | "QUOTA_EXCEEDED" | "REVOKED";
 export type SecurityState = "NORMAL" | "REVIEW" | "LOCKED";
-export type NodeHealth = "ONLINE" | "DEGRADED" | "OFFLINE" | "UNKNOWN";
+export type NodeHealth =
+  | "ONLINE"
+  | "DEGRADED"
+  | "OFFLINE"
+  | "UNKNOWN"
+  | "DRAINING"
+  | "MAINTENANCE";
 export type NodeProtocol = "WIREGUARD" | "XRAY_VLESS" | "XRAY_VMESS" | "XRAY_TROJAN" | "MOCK";
 export type ConfigStatus = "ACTIVE" | "SUSPENDED" | "REVOKED" | "EXPIRED";
 export type QuotaState = "ACTIVE" | "WARNED_80" | "WARNED_90" | "QUOTA_EXCEEDED" | "DISABLED";

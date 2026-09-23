@@ -35,7 +35,13 @@ export type ControlPlaneState = "up" | "degraded" | "down";
 export type GatewayState = "connected" | "degraded" | "unavailable" | "unknown";
 export type DnsState = "up" | "disabled" | "unknown";
 export type EngineState = "up" | "unknown";
-export type NodeHealth = "ONLINE" | "DEGRADED" | "OFFLINE" | "UNKNOWN";
+export type NodeHealth =
+  | "ONLINE"
+  | "DEGRADED"
+  | "OFFLINE"
+  | "UNKNOWN"
+  | "DRAINING"
+  | "MAINTENANCE";
 export type SavingsKind = "MEASURED" | "ESTIMATED" | "INSUFFICIENT_DATA";
 
 export interface SystemStatus {

@@ -52,8 +52,8 @@ export default function DnsPage() {
               </span>
             </div>
             <StatusPill
-              tone={overview.items?.enabled ? "success" : "neutral"}
-              label={overview.items?.enabled ? "Active" : "Inactive"}
+              tone={overview.items?.[0]?.enabled ? "success" : "neutral"}
+              label={overview.items?.[0]?.enabled ? "Active" : "Inactive"}
             />
           </div>
 
@@ -86,16 +86,16 @@ export default function DnsPage() {
             </div>
           )}
 
-          {overview.items?.providerConfigured && (
+          {overview.items?.[0]?.providerConfigured && (
             <div className="bg-surface rounded border border-border p-3">
               <div className="text-[11px] text-muted mb-1">DNS provider</div>
-              <div className="text-sm text-primary">{overview.items?.provider ?? "system"}</div>
+              <div className="text-sm text-primary">{overview.items?.[0]?.provider ?? "system"}</div>
             </div>
           )}
 
-          {overview.items?.disclaimer && (
+          {overview.items?.[0]?.disclaimer && (
             <Callout kind="info" title="About DNS statistics">
-              {overview.items.disclaimer}
+              {overview.items[0].disclaimer}
             </Callout>
           )}
         </Panel>

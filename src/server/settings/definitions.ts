@@ -320,26 +320,91 @@ export const SETTING_DEFINITIONS = [
     key: "notifications.events",
     category: "NOTIFICATIONS",
     description: "Event types that create a notification.",
+    // Every key carries a default so an older stored object still parses: a key added
+    // by a later version must never reset the operator's existing choices.
     schema: z.object({
-      nodeOffline: booleanish,
-      quotaWarning: booleanish,
-      quotaExceeded: booleanish,
-      anomalyDetected: booleanish,
-      authFailures: booleanish,
-      deviceApproval: booleanish,
-      configRevoked: booleanish,
-      optimizationChanged: booleanish,
+      nodeOffline: booleanish.default(true),
+      nodeDegraded: booleanish.default(true),
+      nodeDrain: booleanish.default(true),
+      quotaWarning: booleanish.default(true),
+      quotaExceeded: booleanish.default(true),
+      anomalyDetected: booleanish.default(true),
+      authFailures: booleanish.default(true),
+      deviceApproval: booleanish.default(true),
+      configRevoked: booleanish.default(true),
+      credentialRevoked: booleanish.default(true),
+      optimizationChanged: booleanish.default(true),
+      budgetThreshold: booleanish.default(true),
+      policyTriggered: booleanish.default(true),
+      maintenance: booleanish.default(true),
     }),
     defaultValue: {
       nodeOffline: true,
+      nodeDegraded: true,
+      nodeDrain: true,
       quotaWarning: true,
       quotaExceeded: true,
       anomalyDetected: true,
       authFailures: true,
       deviceApproval: true,
       configRevoked: true,
+      credentialRevoked: true,
       optimizationChanged: true,
+      budgetThreshold: true,
+      policyTriggered: true,
+      maintenance: true,
     },
+  }),
+
+  // -------------------------------------------------------------- routing ----
+  define({
+    key: "routing.weights",
+    category: "NODES",
+    description:
+      "Weights used by the smart routing score. Each weight is applied only when that metric was actually measured; unavailable metrics are excluded, never treated as 0.",
+    schema: z.object({
+      latency: z.number().min(0).max(100).default(30),
+      jitter: z.number().min(0).max(100).default(10),
+      packetLoss: z.number().min(0).max(100).default(25),
+      load: z.number().min(0).max(100).default(20),
+      stability: z.number().min(0).max(100).default(10),
+      capacity: z.number().min(0).max(100).default(5),
+    }),
+    defaultValue: { latency: 30, jitter: 10, packetLoss: 25, load: 20, stability: 10, capacity: 5 },
+    impact: "Affects which node AUTO mode recommends for NEW sessions only.",
+  }),
+  define({
+    key: "routing.moveActiveSessions",
+    category: "NODES",
+    description:
+      "Allow an operator-initiated node move to disconnect active sessions. Off by default: active connections are never moved silently.",
+    schema: booleanish,
+    defaultValue: false,
+    sensitive: true,
+    impact: "When off, 'Move node' only affects the next connection.",
+  }),
+  // ----------------------------------------------------------- automation ----
+  define({
+    key: "automation.enabled",
+    category: "SYSTEM",
+    description: "Run scheduled maintenance jobs (quota reset, retention, health checks, policy evaluation).",
+    schema: booleanish,
+    defaultValue: true,
+    impact: "Every run writes an audit event, whether it did work or not.",
+  }),
+  define({
+    key: "automation.tickSeconds",
+    category: "SYSTEM",
+    description: "How often the scheduler looks for due jobs. Lower means fresher, at the cost of more wake-ups.",
+    schema: z.number().int().min(15).max(3600),
+    defaultValue: 60,
+  }),
+  define({
+    key: "automation.policyEvaluationTargetLimit",
+    category: "SYSTEM",
+    description: "Maximum targets evaluated per policy per run, so a large fleet cannot stall the scheduler.",
+    schema: z.number().int().min(10).max(5000),
+    defaultValue: 500,
   }),
 
   // ------------------------------------------------------------- retention ----
@@ -378,6 +443,28 @@ export const SETTING_DEFINITIONS = [
     description: "Days of node health samples to keep.",
     schema: z.number().int().min(1).max(365),
     defaultValue: 14,
+  }),
+  define({
+    key: "retention.connectionEventDays",
+    category: "RETENTION",
+    description:
+      "Days of connection timeline events to keep. Timeline rows are the 'why' record for device and node actions.",
+    schema: z.number().int().min(7).max(3650),
+    defaultValue: 180,
+  }),
+  define({
+    key: "retention.policyExecutionDays",
+    category: "RETENTION",
+    description: "Days of policy execution history to keep. Short-lived because repeated cooldown rows dominate.",
+    schema: z.number().int().min(7).max(3650),
+    defaultValue: 90,
+  }),
+  define({
+    key: "retention.automationRunDays",
+    category: "RETENTION",
+    description: "Days of automation run bookkeeping to keep. The audit trail is retained separately and much longer.",
+    schema: z.number().int().min(7).max(3650),
+    defaultValue: 90,
   }),
 
   // ---------------------------------------------------------------- system ----

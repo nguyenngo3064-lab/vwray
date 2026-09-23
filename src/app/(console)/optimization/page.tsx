@@ -9,8 +9,8 @@ const OPT_BASE = "/api/optimization";
 
 export default function OptimizationPage() {
   const overview = useList<OptimizationOverview>(OPT_BASE, {});
-  const profiles = overview.items?.profiles ?? [];
-  const targetRange = overview.items?.targetRange;
+  const profiles = overview.items?.[0]?.profiles ?? [];
+  const targetRange = overview.items?.[0]?.targetRange;
 
   return (
     <div className="space-y-4 p-4 lg:p-6">

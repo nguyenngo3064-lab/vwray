@@ -1,0 +1,3 @@
+-- AlterEnum
+ALTER TYPE "AnomalyType" ADD VALUE 'BANDWIDTH_DROP';
+

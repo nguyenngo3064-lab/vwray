@@ -21,18 +21,26 @@ import type { NotificationSeverity } from "@prisma/client";
 export type NotificationType =
   | "node.offline"
   | "node.recovered"
+  | "node.degraded"
+  | "node.drain"
   | "quota.warning"
   | "quota.exceeded"
   | "anomaly.detected"
   | "config.revoked"
   | "device.approved"
   | "device.rejected"
+  | "credential.revoked"
   | "auth.failures"
-  | "optimization.changed";
+  | "optimization.changed"
+  | "budget.threshold"
+  | "policy.triggered"
+  | "maintenance.mode";
 
 /** Which setting key gates a given notification type. */
 const EVENT_SETTING: Partial<Record<NotificationType, keyof EventsSetting>> = {
   "node.offline": "nodeOffline",
+  "node.degraded": "nodeDegraded",
+  "node.drain": "nodeDrain",
   "quota.warning": "quotaWarning",
   "quota.exceeded": "quotaExceeded",
   "anomaly.detected": "anomalyDetected",
@@ -40,18 +48,28 @@ const EVENT_SETTING: Partial<Record<NotificationType, keyof EventsSetting>> = {
   "device.approved": "deviceApproval",
   "device.rejected": "deviceApproval",
   "config.revoked": "configRevoked",
+  "credential.revoked": "credentialRevoked",
   "optimization.changed": "optimizationChanged",
+  "budget.threshold": "budgetThreshold",
+  "policy.triggered": "policyTriggered",
+  "maintenance.mode": "maintenance",
 };
 
 interface EventsSetting {
   nodeOffline: boolean;
+  nodeDegraded: boolean;
+  nodeDrain: boolean;
   quotaWarning: boolean;
   quotaExceeded: boolean;
   anomalyDetected: boolean;
   authFailures: boolean;
   deviceApproval: boolean;
   configRevoked: boolean;
+  credentialRevoked: boolean;
   optimizationChanged: boolean;
+  budgetThreshold: boolean;
+  policyTriggered: boolean;
+  maintenance: boolean;
 }
 
 export interface NotifyInput {
@@ -59,8 +77,9 @@ export interface NotifyInput {
   severity: NotificationSeverity;
   title: string;
   body: string;
-  resource?: string;
-  resourceId?: string;
+  /** `null` is accepted because most callers only have an id that may be absent. */
+  resource?: string | null;
+  resourceId?: string | null;
 }
 
 /**

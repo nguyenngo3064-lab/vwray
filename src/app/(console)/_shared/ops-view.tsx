@@ -356,6 +356,8 @@ export interface ActionRunner {
   error: string | null;
   notice: string | null;
   clear: () => void;
+  /** Lets a caller surface a client-side validation failure through the same display. */
+  setError: (error: unknown) => void;
   run: <T>(
     path: string,
     options?: {
@@ -410,7 +412,11 @@ export function useActionRunner(): ActionRunner {
     setNotice(null);
   }, []);
 
-  return { busy, error, notice, run, clear };
+  const reportError = useCallback((caught: unknown) => {
+    setError(mutationMessage(caught));
+  }, []);
+
+  return { busy, error, notice, run, clear, setError: reportError };
 }
 
 export interface ActionField {

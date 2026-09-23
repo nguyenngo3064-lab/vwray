@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Button, DataTable, EmptyState, Pagination, StatusPill, Select, Input, Panel } from "@/components/ui/primitives";
+import { Button, DataTable, EmptyState, Pagination, StatusPill, Select, Input, Panel, type TableColumn } from "@/components/ui/primitives";
 import {
   formatDateTime,
   formatRelative,
@@ -31,6 +31,7 @@ export default function NodesPage() {
   const [acting, setActing] = useState<{ id: string; action: "rotateToken" | "remove"; note?: string } | null>(null);
   const [reason, setReason] = useState("");
   const mutation = useActionRunner();
+  const columns = nodeColumns((action, id) => setActing({ id, action }));
 
   const list = useList<NodeRow>(NODES_BASE, {
     search: search || undefined,
@@ -46,7 +47,7 @@ export default function NodesPage() {
   async function submit() {
     if (!acting) return false;
     const id = acting.id;
-    let outcome: ReturnType<typeof mutation.run>;
+    let outcome: Awaited<ReturnType<typeof mutation.run>>;
     if (acting.action === "rotateToken") {
       outcome = await mutation.run(`${NODES_BASE}/${id}/token`, {
         method: "POST",
@@ -158,7 +159,12 @@ export default function NodesPage() {
   );
 }
 
-const columns = [
+/**
+ * Table columns. The action column receives a callback instead of closing over the
+ * page's state setter, so the array can stay module-level (no re-creation per render).
+ */
+function nodeColumns(onAct: (action: "rotateToken" | "remove", id: string) => void): TableColumn<NodeRow>[] {
+  return [
   {
     key: "name",
     header: "Name",
@@ -234,13 +240,14 @@ const columns = [
     align: "right" as const,
     render: (row: NodeRow) => (
       <span className="flex justify-end gap-1.5">
-        <Button size="sm" onClick={() => setActing({ id: row.id, action: "rotateToken" })}>
+        <Button size="sm" onClick={() => onAct("rotateToken", row.id)}>
           Rotate token
         </Button>
-        <Button size="sm" variant="danger" onClick={() => setActing({ id: row.id, action: "remove" })}>
+        <Button size="sm" variant="danger" onClick={() => onAct("remove", row.id)}>
           Remove
         </Button>
       </span>
     ),
   },
-];
+  ];
+}

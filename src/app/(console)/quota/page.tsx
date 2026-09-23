@@ -1,11 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Button, DataTable, EmptyState, Pagination, StatusPill, Select, Input, Panel, UsageBar, Callout } from "@/components/ui/primitives";
-import { formatBytes, formatDateTime } from "@/lib/format/units";
-import { quotaTone, type QuotaView } from "../_shared/ops-contract";
+import { Button, DataTable, EmptyState, Pagination, StatusPill, Select, Input, Panel, UsageBar, Callout, type TableColumn } from "@/components/ui/primitives";
+import { formatBytes } from "@/lib/format/units";
+import { formatDateTime, formatRelative, quotaTone, type QuotaView } from "../_shared/ops-contract";
 import { AsyncPanel, FilterBar, useList, useActionRunner, ActionModal, ActionField } from "../_shared/ops-view";
-import { formatRelative } from "../_shared/ops-contract";
 
 const PAGE_SIZE = 25;
 const QUOTA_BASE = "/api/quota";
@@ -18,6 +17,7 @@ export default function QuotaPage() {
   const [acting, setActing] = useState<{ action: "reset"; id: string; note?: string } | null>(null);
   const [note, setNote] = useState("");
   const mutation = useActionRunner();
+  const columns = quotaColumns((_action, id) => setActing({ action: "reset", id }));
 
   const list = useList<QuotaView>(QUOTA_BASE, {
     scope: scopeFilter || undefined,
@@ -130,7 +130,9 @@ export default function QuotaPage() {
   );
 }
 
-const columns = [
+/** See `nodeColumns`: the action column takes a callback so the array stays module-level. */
+function quotaColumns(onAct: (action: "reset", id: string) => void): TableColumn<QuotaView>[] {
+  return [
   {
     key: "scope",
     header: "Scope",
@@ -236,11 +238,12 @@ const columns = [
     render: (row: QuotaView) => (
       <span className="flex justify-end gap-1.5">
         {(row.state === "QUOTA_EXCEEDED" || row.state === "WARNED_90" || row.state === "WARNED_80") && (
-          <Button size="sm" onClick={() => setActing({ action: "reset", id: row.quotaId })}>
+          <Button size="sm" onClick={() => onAct("reset", row.quotaId)}>
             Reset
           </Button>
         )}
       </span>
     ),
   },
-];
+  ];
+}

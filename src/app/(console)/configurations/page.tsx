@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Button, DataTable, EmptyState, Pagination, StatusPill, Select, Input, Panel } from "@/components/ui/primitives";
+import { Button, DataTable, EmptyState, Pagination, StatusPill, Select, Input, Panel, type TableColumn } from "@/components/ui/primitives";
 import {
   formatDateTime,
   configStatusTone,
@@ -26,6 +26,7 @@ export default function ConfigurationsPage() {
   const [acting, setActing] = useState<{ action: "revoke" | "regenerate"; id?: string } | null>(null);
   const [changeNote, setChangeNote] = useState("");
   const mutation = useActionRunner();
+  const columns = configColumns((action, id) => setActing({ action, id }));
 
   const list = useList<ConfigRow>(CONFIGS_BASE, {
     status: statusFilter || undefined,
@@ -43,7 +44,7 @@ export default function ConfigurationsPage() {
       mutation.setError(new Error("No configuration selected."));
       return false;
     }
-    let outcome: ReturnType<typeof mutation.run>;
+    let outcome: Awaited<ReturnType<typeof mutation.run>>;
     if (acting.action === "revoke") {
       outcome = await mutation.run(`${CONFIGS_BASE}/${acting.id}`, {
         method: "DELETE",
@@ -142,7 +143,11 @@ export default function ConfigurationsPage() {
   );
 }
 
-const columns = [
+/** See `nodeColumns`: the action column takes a callback so the array stays module-level. */
+function configColumns(
+  onAct: (action: "revoke" | "regenerate", id: string) => void,
+): TableColumn<ConfigRow>[] {
+  return [
   {
     key: "name",
     header: "Name",
@@ -225,10 +230,10 @@ const columns = [
       <span className="flex justify-end gap-1.5">
         {row.status === "ACTIVE" && (
           <>
-            <Button size="sm" onClick={() => setActing({ action: "regenerate", id: row.id })}>
+            <Button size="sm" onClick={() => onAct("regenerate", row.id)}>
               Regenerate
             </Button>
-            <Button size="sm" variant="danger" onClick={() => setActing({ action: "revoke", id: row.id })}>
+            <Button size="sm" variant="danger" onClick={() => onAct("revoke", row.id)}>
               Revoke
             </Button>
           </>
@@ -236,4 +241,5 @@ const columns = [
       </span>
     ),
   },
-];
+  ];
+}

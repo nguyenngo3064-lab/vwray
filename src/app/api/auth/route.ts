@@ -1,23 +1,11 @@
 import "server-only";
 import { z } from "zod";
-import { jsonOk } from "@/server/http/respond";
-import { withConsole, withErrorHandling, readJson, sourceIpOf } from "@/server/http/guard";
-import {
-  ensureBootstrapOwner,
-  getSession,
-  loginWithAccessCode,
-  logout,
-  rotateSession,
-} from "@/server/auth/service";
-import { revokeSessionById } from "@/server/auth/sessions";
-import { logger } from "@/server/lib/logger";
+import { jsonOk, withErrorHandling } from "@/server/http/respond";
+import { readJson, sourceIpOf } from "@/server/http/guard";
+import { getSession, loginWithAccessCode, logout } from "@/server/auth/service";
 
 const loginSchema = z.object({
   accessCode: z.string().min(4).max(64),
-});
-
-const sessionIdSchema = z.object({
-  sessionId: z.string().min(1).max(64),
 });
 
 /**
@@ -26,16 +14,28 @@ const sessionIdSchema = z.object({
  */
 export const GET = withErrorHandling(async () => {
   const { prisma } = await import("@/server/db/client");
-  const users = await prisma.adminUser.count();
-  const session = await getSession();
-  return jsonOk({ needsBootstrap: users === 0, authenticated: Boolean(session) });
+  const [users, session] = await Promise.all([prisma.adminUser.count(), getSession()]);
+  return jsonOk({
+    /** The login page shows the setup screen instead of a code prompt while true. */
+    needsBootstrap: users === 0,
+    authenticated: Boolean(session),
+    user: session
+      ? {
+          username: session.user.username,
+          displayName: session.user.displayName,
+          role: session.user.role,
+        }
+      : null,
+    expiresAt: session?.expiresAt.toISOString() ?? null,
+  });
 });
 
 /** Access-code login. */
 export const POST = withErrorHandling(async (request: Request) => {
   const parsed = loginSchema.safeParse(await readJson(request));
   if (!parsed.success) {
-    return jsonOk({ ok: false }, { status: 422 });
+    const { errors } = await import("@/server/lib/errors");
+    throw errors.validation("An access code is required.");
   }
 
   const session = await loginWithAccessCode({
@@ -56,5 +56,3 @@ export const DELETE = withErrorHandling(async () => {
   await logout();
   return jsonOk({ ok: true });
 });
-
-export { rotateSession, revokeSessionById };

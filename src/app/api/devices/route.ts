@@ -4,14 +4,10 @@ import { jsonOk } from "@/server/http/respond";
 import { paginationFrom, readJson, withConsole } from "@/server/http/guard";
 import {
   approveDevice,
-  blockDevice,
   deviceCounts,
-  disconnectDevice,
-  getDevice,
   listDevices,
   registerDevice,
   rejectDevice,
-  updateDevice,
 } from "@/server/devices/service";
 
 const listSchema = z.object({
@@ -27,22 +23,6 @@ const registerSchema = z.object({
   platform: z.string().min(1).max(60),
   presentedPublicKey: z.string().max(200).optional().nullable(),
   publicSourceIp: z.string().max(64).optional().nullable(),
-});
-
-const decisionSchema = z.object({
-  note: z.string().max(300).optional().nullable(),
-  nodeId: z.string().min(1).max(64).optional().nullable(),
-});
-
-const blockSchema = z.object({
-  reason: z.string().min(1).max(300),
-});
-
-const updateSchema = z.object({
-  displayName: z.string().min(1).max(80).optional(),
-  optimizationProfileId: z.string().min(1).max(64).nullable().optional(),
-  assignedNodeId: z.string().min(1).max(64).nullable().optional(),
-  securityState: z.enum(["NORMAL", "REVIEW", "LOCKED"]).optional(),
 });
 
 export const GET = withConsole(async (_request, ctx) => {

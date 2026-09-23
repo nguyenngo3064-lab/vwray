@@ -39,11 +39,8 @@ export function deriveHealth(input: {
 }
 
 export async function listNodes() {
-  const staleSeconds = await getHeartbeatStaleSeconds();
-  const nodes = await prisma.vpnNode.findMany({
-    orderBy: { name: "asc" },
-    include: { _count: { select: { sessions: false, healthSamples: false } } },
-  });
+  const staleSeconds = await getSetting<number>("nodes.heartbeatStaleSeconds");
+  const nodes = await prisma.vpnNode.findMany({ orderBy: { name: "asc" } });
 
   return nodes.map((node) => ({
     id: node.id,
@@ -79,9 +76,10 @@ export async function listNodes() {
   }));
 }
 
-async function getHeartbeatStaleSeconds(): Promise<number> {
-  const { getSetting } = await import("@/server/settings/service");
-  return getSetting<number>("nodes.heartbeatStaleSeconds");
+async function assertNodeExists(nodeId: string) {
+  const node = await prisma.vpnNode.findUnique({ where: { id: nodeId } });
+  if (!node) throw errors.notFound("VPN node");
+  return node;
 }
 
 /**
@@ -280,7 +278,7 @@ export async function applyHeartbeat(
   },
   options?: { source?: "REAL" | "MOCK"; at?: Date },
 ) {
-  const staleSeconds = await getHeartbeatStaleSeconds();
+  const staleSeconds = await getSetting<number>("nodes.heartbeatStaleSeconds");
   const previous = await prisma.vpnNode.findUnique({ where: { id: nodeId } });
   if (!previous) return;
 
@@ -360,7 +358,7 @@ export async function applyHeartbeat(
 
 /** Sweeps stale nodes that missed their window while no request touched them. */
 export async function sweepStaleNodes(): Promise<number> {
-  const staleSeconds = await getHeartbeatStaleSeconds();
+  const staleSeconds = await getSetting<number>("nodes.heartbeatStaleSeconds");
   const nodes = await prisma.vpnNode.findMany();
   let marked = 0;
 

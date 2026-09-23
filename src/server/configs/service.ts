@@ -444,3 +444,95 @@ export async function revokeConfig(input: {
 
   return { id: config.id, status: "REVOKED" };
 }
+
+/**
+ * Rolls a configuration back to an earlier revision.
+ *
+ * Versions are append-only: rolling back deletes nothing and rewrites nothing, it
+ * publishes a NEW version whose payload is byte-identical to the target revision. That
+ * keeps the trail honest - an operator can see both the bad change and the correction -
+ * and means a rollback can itself be rolled back.
+ */
+export async function rollbackConfig(input: {
+  configId: string;
+  toVersion: number;
+  actorId: string;
+  actorLabel: string;
+  sourceIp?: string | null;
+}): Promise<{ id: string; version: number; checksum: string; fromVersion: number }> {
+  const config = await prisma.vpnConfig.findUnique({
+    where: { id: input.configId },
+    include: { versions: { orderBy: { version: "desc" } } },
+  });
+  if (!config) throw errors.notFound("Configuration");
+
+  const target = config.versions.find((version) => version.version === input.toVersion);
+  if (!target) throw errors.notFound("Configuration version");
+
+  if (config.currentVersionId) {
+    const current = config.versions.find((version) => version.id === config.currentVersionId);
+    if (current && current.version === target.version) {
+      throw errors.invalidState(`Version ${target.version} is already the current revision.`);
+    }
+  }
+  if (config.status === "REVOKED") {
+    throw errors.invalidState("A revoked configuration cannot be rolled back. Generate a new one.");
+  }
+
+  const nextVersion = Math.max(...config.versions.map((version) => version.version), 0) + 1;
+  const previousVersionNumber = config.version;
+
+  const created = await prisma.$transaction(async (tx) => {
+    if (config.currentVersionId) {
+      await tx.configVersion.update({
+        where: { id: config.currentVersionId },
+        data: { isActive: false, supersededAt: new Date() },
+      });
+    }
+
+    const version = await tx.configVersion.create({
+      data: {
+        configId: config.id,
+        version: nextVersion,
+        // Identical sealed bytes, so the checksum is unchanged: the content IS the
+        // target revision, which is precisely what a rollback means.
+        payloadSealed: target.payloadSealed,
+        checksum: target.checksum,
+        summary: `${config.name} · ${config.protocol} · v${nextVersion} (rollback of v${target.version})`,
+        isActive: true,
+        changeNote: `Rollback to revision ${target.version}`,
+        createdById: input.actorId,
+      },
+    });
+
+    await tx.vpnConfig.update({
+      where: { id: config.id },
+      data: { version: nextVersion, currentVersionId: version.id },
+    });
+
+    const { recordWithin, userActor } = await import("@/server/audit");
+    await recordWithin(tx, {
+      actor: userActor(input.actorId, input.actorLabel),
+      action: "config.rolled_back",
+      resource: "vpn_config",
+      resourceId: config.id,
+      result: "SUCCESS",
+      sourceIp: input.sourceIp,
+      metadata: {
+        fromVersion: previousVersionNumber,
+        restoredVersion: target.version,
+        newVersion: nextVersion,
+        checksum: target.checksum,
+      },
+    });
+
+    return version;
+  });
+
+  return {
+    id: config.id,
+    version: created.version,
+    checksum: created.checksum,
+    fromVersion: previousVersionNumber,
+  };
+}

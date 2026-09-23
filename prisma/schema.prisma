@@ -1,0 +1,1267 @@
+// VWRAY control plane - Prisma schema
+//
+// PostgreSQL is the transactional store for identity, quota state, traffic
+// aggregates, cost records and receipts. Raw realtime samples are NOT stored here:
+// they live in the in-memory realtime buffer and are rolled up into
+// `TrafficAggregate` rows by the aggregator (see TRAFFIC_PIPELINE.md).
+//
+// Conventions:
+//   * `DataSource` (REAL | MOCK) discriminates every measurement so development
+//     mock traffic can never be mistaken for production traffic.
+//   * `MeasurementKind` (MEASURED | ESTIMATED) discriminates optimization numbers,
+//     because DNS-blocked requests cannot be measured byte-for-byte.
+//   * Indexes are declared for the query shapes the dashboards actually use:
+//     timestamp, deviceId, userId, nodeId, status.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// NOTE (Prisma 7): the connection URL is no longer declared in this file. The CLI
+// reads it from `prisma.config.ts` (datasource.url) and the application passes a
+// driver adapter to `new PrismaClient(...)`. See src/server/db/client.ts.
+datasource db {
+  provider = "postgresql"
+}
+
+// ----------------------------------------------------------------- enums -----
+
+enum AdminRole {
+  OWNER
+  ADMIN
+  ANALYST
+  VIEWER
+}
+
+enum AdminUserStatus {
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+enum ActorType {
+  USER
+  SYSTEM
+  GATEWAY
+  API_KEY
+}
+
+enum AuditResult {
+  SUCCESS
+  FAILURE
+  DENIED
+}
+
+enum DataSource {
+  REAL
+  MOCK
+}
+
+enum MeasurementKind {
+  MEASURED
+  ESTIMATED
+}
+
+enum NodeHealthState {
+  ONLINE
+  DEGRADED
+  OFFLINE
+  UNKNOWN
+}
+
+enum NodeProtocol {
+  WIREGUARD
+  XRAY_VLESS
+  XRAY_VMESS
+  XRAY_TROJAN
+  MOCK
+}
+
+enum DeviceApprovalState {
+  PENDING
+  APPROVED
+  REJECTED
+  BLOCKED
+}
+
+enum DeviceConnectionStatus {
+  ONLINE
+  OFFLINE
+  CONNECTING
+  QUOTA_EXCEEDED
+  REVOKED
+}
+
+enum DeviceSecurityState {
+  NORMAL
+  REVIEW
+  LOCKED
+}
+
+enum CredentialKind {
+  WIREGUARD_KEYPAIR
+  WIREGUARD_PSK
+  XRAY_UUID
+  XRAY_SHORT_ID
+  TROJAN_PASSWORD
+}
+
+enum ConfigStatus {
+  ACTIVE
+  SUSPENDED
+  REVOKED
+  EXPIRED
+}
+
+enum TrafficDirection {
+  UPLOAD
+  DOWNLOAD
+}
+
+enum AggregateGranularity {
+  MINUTE
+  HOUR
+  DAY
+  MONTH
+}
+
+enum QuotaScope {
+  SYSTEM
+  USER
+  DEVICE
+  CONFIG
+  NODE
+}
+
+enum QuotaPeriod {
+  DAILY
+  WEEKLY
+  MONTHLY
+  CUSTOM
+}
+
+enum QuotaResetPolicy {
+  AUTO
+  MANUAL
+}
+
+enum EnforcementState {
+  ACTIVE
+  WARNED_80
+  WARNED_90
+  QUOTA_EXCEEDED
+  BLOCKED
+  REVOKED
+}
+
+enum OptimizationProfileKey {
+  BALANCED
+  DATA_SAVER
+  GAMING
+  VIDEO_SAVER
+  MAXIMUM_SAVING
+}
+
+enum BillingPeriod {
+  MONTHLY
+  WEEKLY
+  CUSTOM
+}
+
+enum CostScope {
+  SYSTEM
+  USER
+  DEVICE
+  NODE
+  CATEGORY
+}
+
+enum ReceiptStatus {
+  DRAFT
+  ISSUED
+  VOID
+}
+
+enum SessionEndReason {
+  NORMAL
+  REVOKED
+  QUOTA_EXCEEDED
+  GATEWAY_DISCONNECT
+  STALE
+  NODE_DRAINED
+  UNKNOWN
+}
+
+enum AnomalyType {
+  BANDWIDTH_SPIKE
+  UPLOAD_ANOMALY
+  EXCESSIVE_CONNECTIONS
+  AUTH_FAILURES
+  RAPID_QUOTA_CONSUMPTION
+  NODE_BEHAVIOUR
+  RECONNECT_LOOP
+}
+
+enum AnomalyStatus {
+  OPEN
+  REVIEWED
+  DISMISSED
+}
+
+enum NotificationSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum SettingCategory {
+  GENERAL
+  AUTH
+  SECURITY
+  VPN
+  NODES
+  TRAFFIC
+  QUOTA
+  OPTIMIZATION
+  DNS
+  BILLING
+  RECEIPTS
+  NOTIFICATIONS
+  RETENTION
+  SYSTEM
+}
+
+enum RouteSelectionMode {
+  MANUAL
+  AUTO
+}
+
+// -------------------------------------------------------------- identity -----
+
+/// Operator account. Credentials are either a rotating access code
+/// (`AccessCode`) or a scrypt-hashed password set by an administrator.
+/// Plaintext credentials are never stored or logged.
+model AdminUser {
+  id           String          @id @default(cuid())
+  username     String          @unique
+  displayName  String
+  email        String?         @unique
+  role         AdminRole       @default(ADMIN)
+  status       AdminUserStatus @default(ACTIVE)
+
+  /// scrypt hash, format: scrypt$N$r$p$salt$hash. Null when the account is
+  /// code-only, which is the default for the first-boot owner account.
+  passwordHash String?
+
+  lastLoginAt  DateTime?
+  failedLogins Int             @default(0)
+  lockedUntil  DateTime?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  sessions     AdminSession[]
+  accessCodes  AccessCode[]
+  auditLogs    AuditLog[]
+  apiKeys      ApiKey[]
+  devices      Device[]
+
+  @@index([status])
+  @@map("admin_user")
+}
+
+/// Rotating login credential. The plaintext code is shown exactly once (server
+/// logs on first boot, or the creation response) and only its scrypt hash is
+/// persisted.
+model AccessCode {
+  id          String     @id @default(cuid())
+  label       String
+  /// Non-secret display hint, e.g. "VWRA-…-7F2Q". Never the full code.
+  codeHint    String
+  codeHash    String
+  role        AdminRole  @default(ADMIN)
+  createdById String?
+  createdBy   AdminUser? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt   DateTime   @default(now())
+  expiresAt   DateTime?
+  revokedAt   DateTime?
+  revokedById String?
+  lastUsedAt  DateTime?
+  useCount    Int        @default(0)
+  maxUses     Int?
+
+  @@index([revokedAt])
+  @@index([expiresAt])
+  @@map("access_code")
+}
+
+/// Server-side session. `tokenHash` is a SHA-256 of the opaque cookie value so a
+/// database leak cannot be replayed as a session.
+model AdminSession {
+  id          String    @id @default(cuid())
+  userId      String
+  user        AdminUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tokenHash   String    @unique
+  csrfSecret  String
+  ip          String?
+  userAgent   String?
+  createdAt   DateTime  @default(now())
+  lastSeenAt  DateTime  @default(now())
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  revokedById String?
+  reason      String?
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("admin_session")
+}
+
+/// Login attempt ledger backing rate limiting and brute-force lockout.
+model AuthAttempt {
+  id         String   @id @default(cuid())
+  kind       String
+  identifier String
+  ip         String?
+  success    Boolean
+  reason     String?
+  createdAt  DateTime @default(now())
+
+  @@index([identifier, createdAt])
+  @@index([ip, createdAt])
+  @@map("auth_attempt")
+}
+
+/// Programmatic API keys. Only the hash is stored; scopes bound what a key may do.
+model ApiKey {
+  id         String    @id @default(cuid())
+  name       String
+  prefix     String    @unique
+  keyHash    String
+  scopes     String[]
+  createdById String?
+  createdBy  AdminUser? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  lastUsedAt DateTime?
+
+  @@index([revokedAt])
+  @@map("api_key")
+}
+
+// ----------------------------------------------------------- vpn nodes -------
+
+/// A VPN data-plane node. Nodes are never assumed healthy: `health` only becomes
+/// ONLINE after a heartbeat whose timestamp is inside the staleness window.
+model VpnNode {
+  id             String          @id @default(cuid())
+  nodeId         String          @unique
+  name           String
+  location       String
+  provider       String?
+  publicEndpoint String
+  port           Int
+  protocol       NodeProtocol
+  health         NodeHealthState @default(UNKNOWN)
+
+  /// SHA-256 of the node's agent token. Plaintext is returned once at creation.
+  agentTokenHash   String
+  agentTokenHint   String
+  /// Adapter key this node is driven by, e.g. "wireguard", "xray", "mock".
+  adapterKey       String
+
+  version        String?
+  agentVersion   String?
+  cpuPercent     Float?
+  ramPercent     Float?
+  bandwidthMbps  Float?
+  activeSessions Int             @default(0)
+  /// Carrying capacity hints used by the route selector.
+  maxSessions    Int?
+  weight         Int             @default(100)
+  tags           String[]
+
+  draining       Boolean  @default(false)
+  maintenance    Boolean  @default(false)
+  /// False for development mock nodes. Production code refuses to treat a mock
+  /// node as a real gateway.
+  isRealGateway  Boolean  @default(true)
+
+  lastHeartbeatAt DateTime?
+  registeredAt    DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  createdById     String?
+
+  devices        Device[]
+  configs        VpnConfig[]
+  healthSamples  NodeHealthSample[]
+  sessions       VpnSession[]
+  trafficSamples TrafficSample[]
+  aggregates     TrafficAggregate[]
+  quotas         Quota[]
+  enforcement    GatewayPolicyState[]
+  poolPolicy     NodePoolPolicy?
+
+  @@index([health])
+  @@index([lastHeartbeatAt])
+  @@index([draining])
+  @@map("vpn_node")
+}
+
+/// Time series of node resource telemetry, written from agent heartbeats.
+model NodeHealthSample {
+  id             String   @id @default(cuid())
+  nodeId         String
+  node           VpnNode  @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  sampledAt      DateTime @default(now())
+  cpuPercent     Float?
+  ramPercent     Float?
+  bandwidthMbps  Float?
+  activeSessions Int?
+  latencyMs      Float?
+  packetLossPct  Float?
+  source         DataSource @default(REAL)
+
+  @@index([nodeId, sampledAt])
+  @@map("node_health_sample")
+}
+
+/// Route-selection policy (auto-selection engine). When disabled, routing is manual.
+model NodePoolPolicy {
+  id                  String           @id @default(cuid())
+  nodeId              String           @unique
+  node                VpnNode          @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  enabled             Boolean          @default(true)
+  priority            Int              @default(100)
+  maxLatencyMs        Float?
+  regionLabel         String?
+  protocols           NodeProtocol[]
+  updatedAt           DateTime         @updatedAt
+
+  @@map("node_pool_policy")
+}
+
+// -------------------------------------------------------------- devices ------
+
+/// A VPN client device.
+///
+/// Identity is the server-generated `deviceId` plus a credential keypair/UUID.
+/// The source IP is recorded for operator context only and is never used as an
+/// identity: it changes, and two devices can share a NAT address.
+model Device {
+  id          String @id @default(cuid())
+  /// Opaque, high-entropy public identifier (32 hex chars). Not guessable.
+  deviceId    String @unique
+  displayName String
+  client      String
+  platform    String
+
+  /// Masked for display by default; see `observedSourceIps`.
+  publicSourceIp   String?
+  observedSourceIps String[]
+
+  firstSeenAt DateTime  @default(now())
+  lastSeenAt  DateTime?
+  lastHandshakeAt DateTime?
+
+  connectionStatus DeviceConnectionStatus @default(OFFLINE)
+  approvalState    DeviceApprovalState    @default(PENDING)
+  securityState    DeviceSecurityState    @default(NORMAL)
+
+  /// Coarse counters for fast list rendering. The authoritative numbers live in
+  /// aggregates; these are maintained by the same enforcement transaction.
+  uploadBytes   BigInt @default(0)
+  downloadBytes BigInt @default(0)
+
+  /// Set when the device hits its hard limit; cleared only by an explicit admin
+  /// action (reset/increase/unblock) so a reconnect cannot silently resume.
+  quotaExceededAt DateTime?
+  blockedAt       DateTime?
+  blockedReason   String?
+
+  ownerUserId   String?
+  ownerUser     AdminUser?     @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)
+  assignedNodeId String?
+  assignedNode   VpnNode?      @relation(fields: [assignedNodeId], references: [id], onDelete: SetNull)
+  assignedConfigId String?     @unique
+  assignedConfig   VpnConfig?  @relation("DeviceActiveConfig", fields: [assignedConfigId], references: [id], onDelete: SetNull)
+
+  optimizationProfileId String?
+  optimizationProfile   OptimizationProfile? @relation(fields: [optimizationProfileId], references: [id], onDelete: SetNull)
+
+  approvalNote   String?
+  approvedById   String?
+  approvedAt     DateTime?
+
+  // Connection quality (nullable = unmeasurable, which the UI renders as
+  // "Unavailable" rather than 0).
+  latencyMs      Float?
+  jitterMs       Float?
+  packetLossPct  Float?
+  qualityScore   Float?
+  reconnectCount Int       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  credentials DeviceCredential[]
+  configs     VpnConfig[] @relation("DeviceConfigs")
+  sessions    VpnSession[]
+  quotas      Quota[]
+  aggregates  TrafficAggregate[]
+  samples     TrafficSample[]
+  enforcement GatewayPolicyState[]
+  dnsStats    DnsQueryStat[]
+  anomalies   AnomalyEvent[]
+  optRecords  OptimizationRecord[]
+
+  @@index([approvalState])
+  @@index([connectionStatus])
+  @@index([lastSeenAt])
+  @@index([assignedNodeId])
+  @@index([ownerUserId])
+  @@map("device")
+}
+
+/// VPN credential material. Private halves are AES-256-GCM encrypted with the
+/// control plane's `ENCRYPTION_KEY` and are only ever decrypted to render a
+/// configuration for an authorised operator (which is audited).
+model DeviceCredential {
+  id       String @id @default(cuid())
+  deviceId String
+  device   Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  kind CredentialKind
+
+  /// Public half (WireGuard public key, Xray UUID, Trojan password hash marker).
+  publicKey String
+  /// Short fingerprint for display, e.g. first 8 chars of a SHA-256.
+  fingerprint String
+  /// AES-256-GCM sealed private material: `v1:<iv>:<tag>:<ciphertext>` base64.
+  secretSealed String?
+  /// Deterministic key id so rotation can be traced without exposing material.
+  keyRef String?
+
+  createdAt  DateTime  @default(now())
+  createdById String?
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  revokedReason String?
+  rotatedFromId String?
+  nodeId     String?
+
+  @@index([deviceId, revokedAt])
+  @@index([fingerprint])
+  @@map("device_credential")
+}
+
+// ------------------------------------------------- configurations -------------
+
+/// A generated client configuration for one device on one node/protocol.
+///
+/// Versions are immutable: `VpnConfig` is the identity, `ConfigVersion` holds the
+/// rendered payload per revision so a change never destroys the previous revision
+/// and rollback is possible.
+model VpnConfig {
+  id       String @id @default(cuid())
+  name     String
+  protocol NodeProtocol
+
+  deviceId String?
+  device   Device? @relation("DeviceConfigs", fields: [deviceId], references: [id], onDelete: SetNull)
+
+  nodeId String?
+  node   VpnNode? @relation(fields: [nodeId], references: [id], onDelete: SetNull)
+
+  status ConfigStatus @default(ACTIVE)
+  /// Current revision number, mirrors the newest ConfigVersion.
+  version Int @default(1)
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  createdById   String?
+  expiresAt     DateTime?
+  revokedAt     DateTime?
+  revokedReason String?
+
+  currentVersionId String?        @unique
+  currentVersion   ConfigVersion? @relation("ConfigCurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+
+  versions   ConfigVersion[] @relation("ConfigVersions")
+  sessions   VpnSession[]
+  quotas     Quota[]
+  aggregates TrafficAggregate[]
+
+  /// Virtual back-relation: the device that currently has this config assigned.
+  activeForDevice Device? @relation("DeviceActiveConfig")
+
+  @@index([deviceId])
+  @@index([nodeId])
+  @@index([status])
+  @@map("vpn_config")
+}
+
+/// Immutable rendered payload for one configuration revision.
+model ConfigVersion {
+  id       String    @id @default(cuid())
+  configId String
+  config   VpnConfig @relation("ConfigVersions", fields: [configId], references: [id], onDelete: Cascade)
+
+  version Int
+  /// Sealed payload (`v1:<iv>:<tag>:<ciphertext>`). Contains client secrets, so it
+  /// is encrypted at rest and never included in list responses.
+  payloadSealed String
+  /// SHA-256 of the canonical plaintext payload, for integrity display.
+  checksum String
+  /// Non-secret summary safe to render in tables.
+  summary  String
+
+  isActive     Boolean   @default(true)
+  changeNote   String?
+  createdById  String?
+  createdAt    DateTime  @default(now())
+  supersededAt DateTime?
+
+  currentForConfig VpnConfig? @relation("ConfigCurrentVersion")
+
+  @@unique([configId, version])
+  @@index([configId])
+  @@map("config_version")
+}
+
+// ------------------------------------------------- vpn sessions --------------
+
+/// A VPN session observed by the data plane. Duration and quality metrics are
+/// nullable because a gateway that does not expose them must report "Unavailable"
+/// rather than a fabricated zero.
+model VpnSession {
+  id       String    @id @default(cuid())
+  deviceId String
+  device   Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  nodeId   String
+  node     VpnNode   @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  configId String?
+  config   VpnConfig? @relation(fields: [configId], references: [id], onDelete: SetNull)
+
+  /// Identifier assigned by the gateway (WireGuard peer key, Xray email/UUID).
+  gatewaySessionId String
+  sourceIp         String?
+
+  startedAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  endedAt    DateTime?
+  endReason  SessionEndReason?
+  bytesUp    BigInt    @default(0)
+  bytesDown  BigInt    @default(0)
+
+  latencyMs      Float?
+  jitterMs       Float?
+  packetLossPct  Float?
+  reconnectCount Int     @default(0)
+
+  source DataSource @default(REAL)
+
+  @@unique([nodeId, gatewaySessionId, startedAt])
+  @@index([deviceId, startedAt])
+  @@index([nodeId, startedAt])
+  @@index([endedAt])
+  @@map("vpn_session")
+}
+
+// ------------------------------------------------- quota ---------------------
+
+/// Quota envelope at any scope. `scopeRefId` is the entity id for non-SYSTEM
+/// scopes (userId, deviceId, configId, nodeId).
+model Quota {
+  id         String     @id @default(cuid())
+  scope      QuotaScope
+  scopeRefId String?
+  label      String
+
+  limitBytes BigInt
+  usedBytes  BigInt @default(0)
+  /// Bytes tolerated beyond the limit only for packets already in flight before
+  /// enforcement reached the gateway. Never a bypass budget.
+  graceBytes BigInt @default(0)
+
+  period      QuotaPeriod
+  resetPolicy QuotaResetPolicy @default(MANUAL)
+  resetAt     DateTime?
+  periodStart DateTime?
+
+  enabled Boolean @default(true)
+
+  warned80At      DateTime?
+  warned90At      DateTime?
+  exceededAt      DateTime?
+  lastEvaluatedAt DateTime?
+
+  deviceId String?
+  device   Device?   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  nodeId   String?
+  node     VpnNode?  @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  configId String?
+  config   VpnConfig? @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([scope, scopeRefId])
+  @@index([exceededAt])
+  @@index([enabled])
+  @@map("quota")
+}
+
+/// The enforcement state the gateway must apply for a device. This row IS the
+/// contract with the data plane: the agent pulls it and blocks the peer locally,
+/// so a control-plane outage cannot silently re-enable a quota-exceeded device.
+model GatewayPolicyState {
+  id       String   @id @default(cuid())
+  deviceId String
+  device   Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  nodeId   String?
+  node     VpnNode? @relation(fields: [nodeId], references: [id], onDelete: SetNull)
+
+  state  EnforcementState
+  reason String
+  /// Monotonic revision so agents can detect changes without diffing payloads.
+  revision Int @default(1)
+
+  /// Whether the gateway has confirmed the state. Null means "control plane
+  /// decided, data plane not yet confirmed"; the UI surfaces that distinction.
+  appliedAt DateTime?
+  ackedAt   DateTime?
+  updatedAt DateTime  @updatedAt
+  createdAt DateTime  @default(now())
+
+  @@unique([deviceId, nodeId])
+  @@index([state])
+  @@index([appliedAt])
+  @@map("gateway_policy_state")
+}
+
+// ------------------------------------------------- traffic -------------------
+
+/// Batched raw sample as ingested from a gateway agent. Raw samples have short
+/// retention (`TRAFFIC_RAW_RETENTION_DAYS`); aggregates are the long-lived record.
+model TrafficSample {
+  id       String   @id @default(cuid())
+  ts       DateTime
+  nodeId   String
+  node     VpnNode  @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  deviceId String?
+  device   Device?  @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  direction  TrafficDirection
+  bytes      BigInt
+  /// Bytes after optimization for this sample. Null means the gateway does not
+  /// report optimized totals, so savings must not be inferred from it.
+  bytesOptimized BigInt?
+  packets    Int?
+  connections Int?
+
+  domainId String?
+  domain   TrafficDestination? @relation(fields: [domainId], references: [id], onDelete: SetNull)
+
+  source    DataSource @default(REAL)
+  agentId   String?
+  ingestedAt DateTime  @default(now())
+
+  @@index([ts])
+  @@index([deviceId, ts])
+  @@index([nodeId, ts])
+  @@index([source])
+  @@map("traffic_sample")
+}
+
+/// Rolled-up traffic. One row per (granularity, bucketStart, dimension).
+///
+/// NULL dimensions mean "not attributed at that level". That is correct for filtering
+/// but fatal for a unique key: in PostgreSQL `NULL != NULL`, so an
+/// `ON CONFLICT (granularity, bucketStart, "deviceId", ...)` target would never match
+/// and every flush would append a duplicate row for the same hour.
+///
+/// `dimKey` solves it: a non-null, synthesised identity for the dimension tuple
+/// ("system", "node:<id>", "device:<id>", "user:<id>", "config:<id>",
+/// "category:<name>"). The unique index below is what actually de-duplicates, while
+/// the individual nullable columns remain so queries can filter by dimension.
+model TrafficAggregate {
+  id          String              @id @default(cuid())
+  granularity AggregateGranularity
+  bucketStart DateTime
+  bucketEnd   DateTime
+
+  /// Non-null dimension identity. See the model docs above.
+  dimKey String
+
+  nodeId   String?
+  node     VpnNode? @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  deviceId String?
+  device   Device?  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  userId   String?
+  configId String?
+  config   VpnConfig? @relation(fields: [configId], references: [id], onDelete: SetNull)
+  /// Destination or category attribution when the data plane exposes it.
+  domainId String?
+  domain   TrafficDestination? @relation(fields: [domainId], references: [id], onDelete: SetNull)
+  category String?
+
+  direction      TrafficDirection
+  bytes          BigInt
+  bytesOptimized BigInt?
+  packets        BigInt?
+  connections    Int?
+
+  source DataSource @default(REAL)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([granularity, bucketStart, dimKey, direction, source])
+  @@index([bucketStart, granularity])
+  @@index([deviceId, bucketStart])
+  @@index([nodeId, bucketStart])
+  @@index([userId, bucketStart])
+  @@map("traffic_aggregate")
+}
+
+/// A destination the data plane could actually attribute. `hostname` is only
+/// populated when the network layer legitimately exposes it (DNS query, TLS SNI,
+/// HTTP Host). Application names are NOT stored here: a VPN gateway cannot see
+/// which app produced packets, so inventing "TikTok/YouTube" labels is forbidden.
+model TrafficDestination {
+  id       String  @id @default(cuid())
+  hostname String?
+  ip       String?
+  category String?
+  protocol String?
+  /// How the row was attributed: DNS, SNI, HOST_HEADER, IP_ONLY, NONE.
+  attribution String
+  /// Confidence in the attribution, 0-1. Rendered as a label, not hidden.
+  confidence  Float  @default(0.5)
+
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  samples    TrafficSample[]
+  aggregates TrafficAggregate[]
+  dnsStats   DnsQueryStat[]
+
+  @@unique([hostname, ip])
+  @@index([category])
+  @@index([lastSeenAt])
+  @@map("traffic_destination")
+}
+
+// -------------------------------------------------------- dns filtering -----
+
+/// A DNS filter list (blocklist or allowlist). DNS filtering never inspects
+/// encrypted payloads: it only decides whether a name resolves.
+model DnsList {
+  id         String      @id @default(cuid())
+  name       String
+  kind       DnsListKind
+  category   String?
+  source     String?
+  enabled    Boolean     @default(true)
+  entryCount Int         @default(0)
+  updatedAt  DateTime    @updatedAt
+  createdAt  DateTime    @default(now())
+
+  entries DnsListEntry[]
+
+  @@index([kind, enabled])
+  @@map("dns_list")
+}
+
+model DnsListEntry {
+  id     String  @id @default(cuid())
+  listId String
+  list   DnsList @relation(fields: [listId], references: [id], onDelete: Cascade)
+  domain String
+  /// Per-device or per-profile scoping; null means global.
+  scope  String?
+  note   String?
+  createdAt DateTime @default(now())
+
+  @@unique([listId, domain, scope])
+  @@index([domain])
+  @@map("dns_list_entry")
+}
+
+/// Aggregated DNS outcomes reported by the data plane. Counts are real; there is
+/// exactly one `estimated` number per row (blocked request payload savings) and it
+/// is derived from an explicitly configured assumption, marked as such.
+model DnsQueryStat {
+  id           String   @id @default(cuid())
+  bucketStart  DateTime
+  granularity  AggregateGranularity
+
+  /// Non-null dimension identity (`device:<id>|node:<id>|domain:<name>`).
+  dimKey String
+
+  nodeId       String?
+  deviceId     String?
+  device       Device?  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  domainId     String?
+  domain       TrafficDestination? @relation(fields: [domainId], references: [id], onDelete: SetNull)
+  domainName   String
+  category     String?
+  action       DnsAction
+  count        BigInt   @default(0)
+  /// ESTIMATED bytes avoided by not resolving this name, computed from the
+  /// configured `assumedBlockedResponseBytes` setting. Always labelled estimated.
+  estimatedBytesSaved BigInt?
+  estimatedBytesKind  MeasurementKind?
+  source       DataSource @default(REAL)
+
+  @@unique([granularity, bucketStart, dimKey, action, source])
+  @@index([bucketStart])
+  @@index([domainName])
+  @@index([deviceId, bucketStart])
+  @@map("dns_query_stat")
+}
+
+// ------------------------------------------------- optimization --------------
+
+/// An optimization profile. The behavioural switches here are what the data plane
+/// actually applies; the saving targets are TARGETS, never guarantees.
+model OptimizationProfile {
+  id          String                 @id @default(cuid())
+  key         OptimizationProfileKey @unique
+  name        String
+  description String
+  /// Seeded profiles are protected from deletion; they can still be edited.
+  builtin     Boolean                @default(true)
+  enabled     Boolean                @default(true)
+
+  dnsFilteringLevel      String  @default("standard")
+  dnsBlocklistCategories String[]
+  /// Compression/codec preferences forwarded to the adapter. Empty means the
+  /// adapter applies nothing it cannot do safely.
+  compressionEnabled  Boolean @default(true)
+  mediaOptimization   Boolean @default(false)
+  latencyPriority     Boolean @default(false)
+  udpStability        Boolean @default(false)
+  lowQueueing         Boolean @default(false)
+  aggressiveFiltering Boolean @default(false)
+  routingPolicy       String  @default("default")
+
+  /// Documented expectation range, surfaced in the UI as a target, not a promise.
+  targetSavingMinPct Float @default(0)
+  targetSavingMaxPct Float @default(0)
+
+  /// Adapter capabilities this profile requires. If a node cannot provide them,
+  /// the UI states which optimizations are inactive instead of pretending.
+  requiredCapabilities String[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  devices Device[]
+  records OptimizationRecord[]
+
+  @@index([enabled])
+  @@map("optimization_profile")
+}
+
+/// Recorded optimization outcome for a bucket and dimension. `originalBytes` is
+/// only recorded when the data plane can measure the pre-optimization volume;
+/// otherwise the row is an ESTIMATE and `kind` says so.
+model OptimizationRecord {
+  id          String               @id @default(cuid())
+  granularity AggregateGranularity
+  bucketStart DateTime
+  bucketEnd   DateTime
+
+  /// Non-null dimension identity (see TrafficAggregate for the NULL-in-unique-key
+  /// rationale). Formed from every non-null dimension of the record.
+  dimKey String
+
+  profileId String?
+  profile   OptimizationProfile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  deviceId  String?
+  device    Device?              @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  nodeId    String?
+  userId    String?
+  category  String?
+
+  originalBytes  BigInt
+  optimizedBytes BigInt
+  savedBytes     BigInt
+  /// null when originalBytes is 0 (undefined, not "0% saved").
+  savingPct Float?
+  kind      MeasurementKind @default(MEASURED)
+  /// Human-readable basis for an ESTIMATED row, e.g. "DNS blocklist assumption".
+  estimationBasis String?
+
+  source    DataSource @default(REAL)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@unique([granularity, bucketStart, dimKey, kind, source])
+  @@index([bucketStart])
+  @@index([deviceId, bucketStart])
+  @@map("optimization_record")
+}
+
+// ---------------------------------------------------- billing simulation -----
+
+/// Pricing for the SIMULATED billing module. There is no payment processor here.
+model BillingConfig {
+  id                  String        @id @default(cuid())
+  name                String        @default("default")
+  active              Boolean       @default(true)
+  currency            String        @default("VND")
+  baseFee             Decimal       @db.Decimal(18, 4) @default(0)
+  pricePerGb          Decimal       @db.Decimal(18, 4) @default(0)
+  freeQuotaGb         Decimal       @db.Decimal(18, 4) @default(0)
+  billingPeriod       BillingPeriod @default(MONTHLY)
+  periodStartDay      Int           @default(1)
+  /// Label shown on receipts, e.g. a reference provider name. Never implies an
+  /// authorisation that does not exist.
+  providerLabel       String        @default("VWRAY")
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  updatedById         String?
+
+  receipts Receipt[]
+
+  @@index([active])
+  @@map("billing_config")
+}
+
+/// A computed cost for a scope and period. Every number is derived from stored
+/// traffic aggregates and the active BillingConfig; nothing is invented.
+model CostRecord {
+  id          String    @id @default(cuid())
+  scope       CostScope
+  scopeRefId  String?
+  label       String
+  periodStart DateTime
+  periodEnd   DateTime
+
+  rawBytes       BigInt
+  optimizedBytes BigInt
+  savedBytes     BigInt
+
+  freeQuotaGb Decimal @db.Decimal(18, 4) @default(0)
+  billableGb  Decimal @db.Decimal(18, 6) @default(0)
+  baseFee     Decimal @db.Decimal(18, 4) @default(0)
+  pricePerGb  Decimal @db.Decimal(18, 4) @default(0)
+  currency    String  @default("VND")
+
+  computedCost            Decimal @db.Decimal(18, 4) @default(0)
+  costWithoutOptimization Decimal @db.Decimal(18, 4) @default(0)
+  savedCost               Decimal @db.Decimal(18, 4) @default(0)
+
+  /// Compact hash of the inputs, so a receipt can prove which calculation it used.
+  inputHash String
+  source    DataSource @default(REAL)
+
+  computedAt DateTime @default(now())
+
+  @@unique([scope, scopeRefId, periodStart, periodEnd, source])
+  @@index([periodStart])
+  @@index([scope, scopeRefId])
+  @@map("cost_record")
+}
+
+/// A SIMULATED receipt. Not an official payment document, and never presented as one.
+model Receipt {
+  id            String @id @default(cuid())
+  receiptNumber String @unique
+
+  customerName String
+  customerRef  String?
+  deviceId     String?
+  configLabel  String?
+  nodeLabel    String?
+
+  periodStart DateTime
+  periodEnd   DateTime
+
+  rawBytes       BigInt
+  optimizedBytes BigInt
+  savedBytes     BigInt
+  savingPct      Float?
+  savingsKind    MeasurementKind
+
+  pricePerGb     Decimal @db.Decimal(18, 4)
+  baseFee        Decimal @db.Decimal(18, 4)
+  freeQuotaGb    Decimal @db.Decimal(18, 4) @default(0)
+  billableGb     Decimal @db.Decimal(18, 6)
+  simulatedTotal Decimal @db.Decimal(18, 4)
+  currency       String
+
+  /// Canonical payload that the verification hash covers.
+  payloadCanonical String
+  /// SHA-256 of `payloadCanonical`, verified by /receipts/verify/[receiptNumber].
+  verificationHash String
+
+  billingConfigId String?
+  billingConfig   BillingConfig? @relation(fields: [billingConfigId], references: [id], onDelete: SetNull)
+  costRecordId    String?
+
+  stampEnabled  Boolean @default(false)
+  /// Always carries the simulation disclaimer required by the brief.
+  stampText     String?
+  providerLabel String  @default("VWRAY")
+  disclaimer    String
+
+  status        ReceiptStatus @default(ISSUED)
+  source        DataSource    @default(REAL)
+  generatedAt   DateTime      @default(now())
+  generatedById String?
+
+  @@index([generatedAt])
+  @@index([customerRef])
+  @@index([verificationHash])
+  @@map("receipt")
+}
+
+// ------------------------------------------------------ audit / ops ----------
+
+/// Append-only audit trail. Secrets are never written here; metadata is limited to
+/// non-sensitive context (ids, counts, reasons).
+model AuditLog {
+  id         String     @id @default(cuid())
+  ts         DateTime   @default(now())
+  actorType  ActorType
+  actorId    String?
+  actor      AdminUser? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  actorLabel String
+
+  action     String
+  resource   String
+  resourceId String?
+
+  result   AuditResult
+  sourceIp String?
+  /// Correlation id shared with the structured logs of the same request.
+  requestId String?
+  metadata Json?
+
+  @@index([ts])
+  @@index([action, ts])
+  @@index([resource, resourceId])
+  @@index([actorId, ts])
+  @@index([result])
+  @@map("audit_log")
+}
+
+/// Typed key/value settings. Values are validated per key by the settings registry;
+/// secrets never live here (they come from the environment).
+model SystemSetting {
+  key         String          @id
+  category    SettingCategory
+  value       Json
+  description String?
+  updatedAt   DateTime        @updatedAt
+  updatedById String?
+
+  @@index([category])
+  @@map("system_setting")
+}
+
+/// Detected network anomaly, phrased neutrally. Detection never accuses a user of
+/// abuse; it records an observation for operator review.
+model AnomalyEvent {
+  id         String   @id @default(cuid())
+  detectedAt DateTime @default(now())
+  type       AnomalyType
+  severity   NotificationSeverity
+
+  nodeId   String?
+  deviceId String?
+  device   Device? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  userId   String?
+  label    String
+
+  /// Neutral, factual sentence, e.g. "Unusual traffic pattern detected".
+  summary String
+  /// The measurements that triggered it, so an operator can judge for themselves.
+  metrics Json
+
+  /// Deduplication key: identical open anomalies do not pile up.
+  dedupeKey String?
+
+  status     AnomalyStatus @default(OPEN)
+  reviewedBy String?
+  reviewedAt DateTime?
+  note       String?
+
+  @@unique([dedupeKey])
+  @@index([detectedAt])
+  @@index([status])
+  @@index([type, detectedAt])
+  @@map("anomaly_event")
+}
+
+model Notification {
+  id        String               @id @default(cuid())
+  createdAt DateTime             @default(now())
+  severity  NotificationSeverity
+  type      String
+  title     String
+  body      String
+  resource  String?
+  resourceId String?
+
+  readAt           DateTime?
+  webhookDeliveredAt DateTime?
+  webhookStatus    String?
+
+  @@index([createdAt])
+  @@index([readAt])
+  @@index([type, createdAt])
+  @@map("notification")
+}
+
+/// Outbound webhook endpoint. URLs are SSRF-validated on write and again on send.
+model WebhookEndpoint {
+  id        String   @id @default(cuid())
+  name      String
+  url       String
+  /// Sealed signing secret (`v1:<iv>:<tag>:<ciphertext>`); used for HMAC headers.
+  secretSealed String?
+  events    String[]
+  enabled   Boolean  @default(true)
+
+  lastDeliveryAt DateTime?
+  lastStatus     String?
+  failureCount   Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([enabled])
+  @@map("webhook_endpoint")
+}
+
+/// Bookkeeping for retention/cleanup jobs so operators can see what ran and what it
+/// removed (and spot a job that silently stopped working).
+model MaintenanceRun {
+  id          String   @id @default(cuid())
+  job         String
+  startedAt   DateTime @default(now())
+  finishedAt  DateTime?
+  deletedRows Int      @default(0)
+  status      String   @default("RUNNING")
+  detail      Json?
+
+  @@index([job, startedAt])
+  @@map("maintenance_run")
+}
+
+enum DnsAction {
+  ALLOW
+  BLOCK
+}
+
+enum DnsListKind {
+  BLOCKLIST
+  ALLOWLIST
+}

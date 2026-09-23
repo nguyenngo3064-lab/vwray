@@ -1,0 +1,84 @@
+##############################################################################
+# Docker build-context filter for the VWRAY control-plane image.
+#
+# Every entry is either large, secret-bearing or platform-specific. This is not
+# only a build-speed concern: anything left in the context can be baked into an
+# image layer by `COPY . .`, and image layers are readable by anyone who can pull
+# the image. A `.env` or a private key that reaches the context is a leak waiting
+# for a careless COPY.
+##############################################################################
+
+# ------------------------------------------------- dependencies / build output -
+# Installed and produced inside the image (`npm ci`, `prisma generate`,
+# `next build`). Copying the host's copies would poison the build with the
+# developer's platform-specific binaries.
+node_modules
+.next
+out
+build
+dist
+.swc
+*.tsbuildinfo
+next-env.d.ts
+
+# ------------------------------------------------------------------ VCS / IDE --
+# `.git` alone is usually the largest object in a repository and is never needed.
+.git
+.github
+.gitignore
+.claude
+.agents
+agent
+skills-lock.json
+.vscode
+.idea
+.DS_Store
+*.swp
+
+# ------------------------------------------------------------ secrets & keys --
+# The runtime image receives every credential from the orchestrator at run time.
+# The only DATABASE_URL in the build is the intentionally dead placeholder passed
+# as a build ARG (see the Dockerfile).
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.jks
+id_rsa*
+id_ed25519*
+known_hosts
+.npmrc
+
+# -------------------------------------------------- databases / dumps / backups -
+# NOTE: `*.sql` is deliberately NOT ignored - prisma/migrations/**/migration.sql
+# is source that the runtime image needs in order to run `migrate deploy`.
+backups
+*.dump
+*.sql.gz
+*.tar.gz
+coverage
+.nyc_output
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ------------------------------------------------------- ops-only descriptors --
+# These change on ops branches and have no effect on the image content. Ignoring
+# them keeps the `COPY . .` layer cacheable across infrastructure-only commits.
+Dockerfile
+Dockerfile.*
+.dockerignore
+docker-compose.yml
+docker-compose.*.yml
+railway.json
+render.yaml
+Procfile
+README.md
+docs
+LICENSE
+CODEOWNERS

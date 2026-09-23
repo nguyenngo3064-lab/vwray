@@ -1,0 +1,336 @@
+/*
+ * VWRAY console design tokens.
+ *
+ * Design read (per taste-skill §0.B): reading this as an operations console for
+ * network/security operators, with a tactical-telemetry language, leaning toward
+ * Tailwind v4 CSS-first tokens + monospaced data + hairline compartmentalisation.
+ *
+ * Dials: DESIGN_VARIANCE 3 (rigid, engineered), MOTION 3 (state-only motion; a
+ * console animates to communicate state, never to decorate), VISUAL_DENSITY 7
+ * (cockpit: dense tables, compact controls, information first).
+ *
+ * Shape lock: a single 2px radius everywhere. No gradients, no glows, no glass.
+ * Colour lock: status colours (success/warning/danger/info) are reserved for real
+ * semantic state. Nothing is coloured to look nicer.
+ */
+
+@import "tailwindcss";
+
+@theme {
+  /* Canvas */
+  --color-canvas: #09090b;
+  --color-surface: #111113;
+  --color-elevated: #18181b;
+  --color-border: #27272a;
+  --color-border-strong: #3f3f46;
+
+  /* Ink */
+  --color-primary: #e5e7eb;
+  --color-muted: #a1a1aa;
+  --color-faint: #71717a;
+
+  /* Status - semantic only */
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-info: #3b82f6;
+
+  /* Series - charts and upload/download distinction */
+  --color-series-download: #3b82f6;
+  --color-series-upload: #22c55e;
+  --color-series-total: #a1a1aa;
+
+  --radius-sm: 2px;
+  --radius-md: 2px;
+  --radius-lg: 2px;
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    --z-header: 30;
+    --z-sidebar: 40;
+    --z-overlay: 50;
+    --z-toast: 60;
+  }
+
+  html {
+    background-color: var(--color-canvas);
+    /* Desktop-first: 16px root with dense scaling below 1024px. */
+    font-size: 16px;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-primary);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Numbers must align in tables and rate readouts. */
+  .tabular,
+  table,
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background-color: color-mix(in srgb, var(--color-info) 35%, transparent);
+    color: var(--color-primary);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-info);
+    outline-offset: 2px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-canvas);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border: 2px solid var(--color-canvas);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-border-strong);
+  }
+}
+
+@layer components {
+  /* Compartmentalised panel: the structural unit of the console. Visible border,
+     no shadow, no radius drift. */
+  .panel {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+  }
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.625rem 0.875rem;
+    border-bottom: 1px solid var(--color-border);
+    min-height: 2.5rem;
+  }
+
+  /* Functional micro-label used for panel titles and metadata, not decoration. */
+  .micro-label {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    line-height: 1.4;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+
+  .data-value {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--color-primary);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    height: 2rem;
+    padding: 0 0.75rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    border: 1px solid var(--color-border);
+    background-color: var(--color-elevated);
+    color: var(--color-primary);
+    border-radius: var(--radius-sm);
+    transition: background-color 120ms ease, border-color 120ms ease;
+    white-space: nowrap;
+  }
+  .btn:hover:not(:disabled) {
+    background-color: var(--color-surface);
+    border-color: var(--color-border-strong);
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .btn-primary {
+    background-color: var(--color-primary);
+    color: var(--color-canvas);
+    border-color: var(--color-primary);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background-color: #ffffff;
+    border-color: #ffffff;
+  }
+  .btn-danger {
+    border-color: color-mix(in srgb, var(--color-danger) 45%, var(--color-border));
+    color: var(--color-danger);
+  }
+
+  .input {
+    height: 2rem;
+    width: 100%;
+    padding: 0 0.625rem;
+    font-size: 0.8125rem;
+    background-color: var(--color-canvas);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    color: var(--color-primary);
+  }
+  .input::placeholder {
+    color: var(--color-faint);
+  }
+  .input:focus {
+    border-color: var(--color-border-strong);
+  }
+
+  /* Dense operational table. Hover state is a tint, not a colour change. */
+  .data-table {
+    width: 100%;
+    font-size: 0.8125rem;
+    border-collapse: collapse;
+  }
+  .data-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background-color: var(--color-elevated);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+    font-weight: 500;
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--color-border);
+    white-space: nowrap;
+  }
+  .data-table td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--color-border);
+    vertical-align: middle;
+  }
+  .data-table tbody tr:hover td {
+    background-color: color-mix(in srgb, var(--color-elevated) 65%, transparent);
+  }
+  .data-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  .table-scroll {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+
+  /* Status indicator: colour only when the state is real. */
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.125rem 0.4rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    color: var(--color-muted);
+    white-space: nowrap;
+  }
+  .status-success {
+    color: var(--color-success);
+    border-color: color-mix(in srgb, var(--color-success) 40%, var(--color-border));
+  }
+  .status-warning {
+    color: var(--color-warning);
+    border-color: color-mix(in srgb, var(--color-warning) 40%, var(--color-border));
+  }
+  .status-danger {
+    color: var(--color-danger);
+    border-color: color-mix(in srgb, var(--color-danger) 40%, var(--color-border));
+  }
+  .status-info {
+    color: var(--color-info);
+    border-color: color-mix(in srgb, var(--color-info) 40%, var(--color-border));
+  }
+
+  /* Unmeasurable values are a first-class state - never rendered as zero. */
+  .unavailable {
+    color: var(--color-faint);
+    letter-spacing: 0.02em;
+  }
+}
+
+@layer utilities {
+  /* Hairline compartment grid used behind wide layouts. */
+  .grid-lines {
+    background-image: linear-gradient(
+        to right,
+        color-mix(in srgb, var(--color-border) 55%, transparent) 1px,
+        transparent 1px
+      ),
+      linear-gradient(
+        to bottom,
+        color-mix(in srgb, var(--color-border) 55%, transparent) 1px,
+        transparent 1px
+      );
+    background-size: 32px 32px;
+  }
+}
+
+/* Reduced motion is mandatory: every animation here is optional state feedback. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Realtime connection pulse: a live stream is a slow, small pulse. */
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.live-dot {
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+/* Receipt/print output: white paper, black ink, console chrome hidden. */
+@media print {
+  @page {
+    margin: 14mm;
+  }
+  body {
+    background: #ffffff !important;
+    color: #111111 !important;
+  }
+  .print-hide {
+    display: none !important;
+  }
+  .panel {
+    border-color: #d4d4d8 !important;
+    background: #ffffff !important;
+  }
+}

@@ -30,6 +30,8 @@ export default function NodesPage() {
   const [page, setPage] = useState(1);
   const [acting, setActing] = useState<{ id: string; action: "rotateToken" | "remove"; note?: string } | null>(null);
   const [reason, setReason] = useState("");
+  const [registration, setRegistration] = useState({ name: "", location: "", publicEndpoint: "", port: "51820", protocol: "WIREGUARD" });
+  const [issuedToken, setIssuedToken] = useState<string | null>(null);
   const mutation = useActionRunner();
   const columns = nodeColumns((action, id) => setActing({ id, action }));
 
@@ -63,6 +65,23 @@ export default function NodesPage() {
         onDone: () => { setActing(null); setReason(""); list.refresh(); },
       });
     }
+    return outcome.ok;
+  }
+
+  async function register() {
+    const outcome = await mutation.run<{ agentToken: string }>(NODES_BASE, {
+      body: {
+        ...registration,
+        port: Number(registration.port),
+        isRealGateway: true,
+      },
+      successNote: "Node registered. Store the agent token and configure the node heartbeat.",
+      onDone: () => {
+        setRegistration({ name: "", location: "", publicEndpoint: "", port: "51820", protocol: "WIREGUARD" });
+        list.refresh();
+      },
+    });
+    if (outcome.ok) setIssuedToken(outcome.data.agentToken);
     return outcome.ok;
   }
 
@@ -125,6 +144,19 @@ export default function NodesPage() {
             Private keys, passwords, and node tokens are never displayed here. Ask the node operator for the matching client profile through a secure channel.
           </p>
         </details>
+      </Panel>
+
+      <Panel title="Register VPN node" bodyClassName="space-y-3 p-4">
+        <div className="grid gap-3 md:grid-cols-[1fr_1fr_1fr_8rem_10rem_auto] md:items-end">
+          <label className="space-y-1"><span className="micro-label block">Name</span><Input value={registration.name} onChange={(event) => setRegistration({ ...registration, name: event.target.value })} /></label>
+          <label className="space-y-1"><span className="micro-label block">Location</span><Input value={registration.location} onChange={(event) => setRegistration({ ...registration, location: event.target.value })} /></label>
+          <label className="space-y-1"><span className="micro-label block">Public endpoint</span><Input value={registration.publicEndpoint} onChange={(event) => setRegistration({ ...registration, publicEndpoint: event.target.value })} /></label>
+          <label className="space-y-1"><span className="micro-label block">Port</span><Input type="number" value={registration.port} onChange={(event) => setRegistration({ ...registration, port: event.target.value })} /></label>
+          <label className="space-y-1"><span className="micro-label block">Protocol</span><Select value={registration.protocol} onChange={(event) => setRegistration({ ...registration, protocol: event.target.value })}><option value="WIREGUARD">WireGuard</option><option value="XRAY_VLESS">Xray VLESS</option><option value="XRAY_VMESS">Xray VMess</option><option value="XRAY_TROJAN">Xray Trojan</option></Select></label>
+          <Button variant="primary" onClick={() => void register()} disabled={mutation.busy || !registration.name.trim() || !registration.location.trim() || !registration.publicEndpoint.trim()}>Register</Button>
+        </div>
+        {issuedToken ? <div className="border-t border-border pt-3 text-[12px]" role="status"><p className="text-warning">Copy this token now. It is shown once.</p><code className="mt-1 block break-all font-mono text-primary">{issuedToken}</code></div> : null}
+        {mutation.error ? <p className="text-[12px] text-danger" role="alert">{mutation.error}</p> : null}
       </Panel>
 
       <FilterBar

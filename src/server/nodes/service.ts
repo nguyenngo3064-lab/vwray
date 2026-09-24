@@ -62,11 +62,15 @@ export function deriveHealth(input: {
   return heartbeatState;
 }
 
-export async function listNodes() {
+export async function listNodes(filters?: {
+  search?: string;
+  protocol?: string;
+  health?: string;
+}) {
   const staleSeconds = await getSetting<number>("nodes.heartbeatStaleSeconds");
   const nodes = await prisma.vpnNode.findMany({ orderBy: { name: "asc" } });
 
-  return nodes.map((node) => ({
+  const annotated = nodes.map((node) => ({
     id: node.id,
     nodeId: node.nodeId,
     name: node.name,
@@ -98,6 +102,15 @@ export async function listNodes() {
     registeredAt: node.registeredAt,
     tokenHint: node.agentTokenHint,
   }));
+
+  const search = filters?.search?.trim().toLowerCase();
+  return annotated.filter((node) => {
+    if (filters?.protocol && node.protocol !== filters.protocol) return false;
+    if (filters?.health && node.health !== filters.health) return false;
+    if (search && ![node.name, node.nodeId, node.location, node.publicEndpoint]
+      .some((value) => value.toLowerCase().includes(search))) return false;
+    return true;
+  });
 }
 
 async function assertNodeExists(nodeId: string) {

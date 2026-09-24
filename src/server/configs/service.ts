@@ -6,6 +6,7 @@ import { record } from "@/server/audit";
 import { getSetting } from "@/server/settings/service";
 import { getEnv } from "@/server/config/env";
 import { adapterKeyFor, getAdapter } from "@/server/vpn/registry";
+import { deriveHealth } from "@/server/nodes/service";
 import { fingerprintOf, sealSecret, sha256Hex, unsealSecret } from "@/server/lib/crypto";
 import type { XrayAdapter } from "@/server/vpn/adapters/xray";
 
@@ -190,6 +191,31 @@ export async function generateConfig(input: {
 
   const node = await prisma.vpnNode.findUnique({ where: { id: input.nodeId } });
   if (!node) throw errors.notFound("Node");
+
+  if (input.protocol !== node.protocol) {
+    throw errors.precondition("The selected protocol does not match the node protocol.");
+  }
+
+  const staleSeconds = await getSetting<number>("nodes.heartbeatStaleSeconds");
+  const health = deriveHealth({
+    lastHeartbeatAt: node.lastHeartbeatAt,
+    staleSeconds,
+    maintenance: node.maintenance,
+    draining: node.draining,
+  });
+  if (health !== "ONLINE") {
+    throw errors.precondition(
+      health === "UNKNOWN"
+        ? "This node has not sent a heartbeat yet. Wait for a valid heartbeat before generating a configuration."
+        : health === "DEGRADED"
+        ? "This node heartbeat is stale. Wait for the node to recover before generating a configuration."
+        : health === "DRAINING"
+        ? "This node is draining and cannot receive new configurations."
+        : health === "MAINTENANCE"
+        ? "This node is in maintenance and cannot receive new configurations."
+        : "This node is offline and cannot receive new configurations.",
+    );
+  }
 
   if (input.protocol === "MOCK") {
     throw errors.unsupported("The development mock gateway cannot produce client configurations.");

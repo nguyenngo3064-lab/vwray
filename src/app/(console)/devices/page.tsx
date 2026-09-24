@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { formatBytes } from "@/lib/format/units";
-import { Button, DataTable, EmptyState, Pagination, StatusPill } from "@/components/ui/primitives";
+import { Button, DataTable, EmptyState, Pagination, StatusPill, Input, Panel } from "@/components/ui/primitives";
 import {
   approvalTone,
   connectionTone,
@@ -48,6 +48,7 @@ export default function DevicesPage() {
   const [acting, setActing] = useState<{ id: string; action: ActionKind } | null>(null);
   const [note, setNote] = useState("");
   const [reason, setReason] = useState("");
+  const [registration, setRegistration] = useState({ displayName: "", client: "", platform: "" });
   const mutation = useActionRunner();
 
   const list = useList<DeviceRow>("/api/devices", {
@@ -100,6 +101,18 @@ export default function DevicesPage() {
     return outcome.ok;
   }
 
+  async function register() {
+    const outcome = await mutation.run("/api/devices", {
+      body: registration,
+      successNote: "Device registered and waiting for approval.",
+      onDone: () => {
+        setRegistration({ displayName: "", client: "", platform: "" });
+        list.refresh();
+      },
+    });
+    return outcome.ok;
+  }
+
   const singleFields: ActionField[] = acting
     ? acting.action === "approve" || acting.action === "reject"
       ? [{ id: "note", label: "Operator note", kind: "textarea", value: note, onChange: setNote }]
@@ -121,6 +134,27 @@ export default function DevicesPage() {
           Monitor active connections, mobile data usage, and access decisions from one place.
         </p>
       </div>
+
+      <Panel title="Register device" bodyClassName="space-y-3 p-4">
+        <div className="grid gap-3 md:grid-cols-[1fr_1fr_1fr_auto] md:items-end">
+          <label className="space-y-1">
+            <span className="micro-label block">Display name</span>
+            <Input value={registration.displayName} onChange={(event) => setRegistration({ ...registration, displayName: event.target.value })} />
+          </label>
+          <label className="space-y-1">
+            <span className="micro-label block">Client</span>
+            <Input value={registration.client} onChange={(event) => setRegistration({ ...registration, client: event.target.value })} />
+          </label>
+          <label className="space-y-1">
+            <span className="micro-label block">Platform</span>
+            <Input value={registration.platform} onChange={(event) => setRegistration({ ...registration, platform: event.target.value })} />
+          </label>
+          <Button variant="primary" onClick={() => void register()} disabled={mutation.busy || !registration.displayName.trim() || !registration.client.trim() || !registration.platform.trim()}>
+            {mutation.busy ? "Registering..." : "Register"}
+          </Button>
+        </div>
+        {mutation.error ? <p className="text-[12px] text-danger" role="alert">{mutation.error}</p> : null}
+      </Panel>
 
       {counts ? (
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6">

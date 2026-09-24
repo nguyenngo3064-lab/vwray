@@ -6,7 +6,11 @@ import { errors } from "@/server/lib/errors";
 import { createNode, listNodes } from "@/server/nodes/service";
 
 export const GET = withConsole(async (_request, ctx) => {
-  const nodes = await listNodes();
+  const nodes = await listNodes({
+    search: ctx.url.searchParams.get("search") ?? undefined,
+    protocol: ctx.url.searchParams.get("protocol") ?? undefined,
+    health: ctx.url.searchParams.get("health") ?? undefined,
+  });
   const annotated = nodes.map((node) => ({ ...node, healthReason: healthReasonOf(node) }));
   return jsonOk(annotated, {
     meta: { total: annotated.length },

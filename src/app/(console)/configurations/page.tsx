@@ -41,7 +41,7 @@ export default function ConfigurationsPage() {
     pageSize: PAGE_SIZE,
   });
   const devices = useList<DeviceRow>("/api/devices", { approvalState: "APPROVED", pageSize: 100 });
-  const nodes = useList<NodeRow>("/api/nodes", { health: "ONLINE", pageSize: 100 });
+  const nodes = useList<NodeRow>("/api/nodes", { health: "ONLINE", protocol, pageSize: 100 });
 
   const totalConfigs = list.meta.total;
   const activeCount = list.items?.filter((c) => c.status === "ACTIVE").length ?? 0;
@@ -129,7 +129,7 @@ export default function ConfigurationsPage() {
           </label>
           <label className="space-y-1">
             <span className="micro-label block">Protocol</span>
-            <Select value={protocol} onChange={(event) => setProtocol(event.target.value)}>
+            <Select value={protocol} onChange={(event) => { setProtocol(event.target.value); setNodeId(""); }}>
               <option value="WIREGUARD">WireGuard</option>
               <option value="XRAY_VLESS">Xray VLESS</option>
               <option value="XRAY_VMESS">Xray VMess</option>
@@ -140,10 +140,12 @@ export default function ConfigurationsPage() {
             {mutation.busy ? "Generating..." : protocol === "WIREGUARD" ? "Generate & Open WireGuard" : "Generate"}
           </Button>
         </div>
-        {!devices.loading && devices.items.length === 0 ? (
+        {devices.error ? <p className="text-[12px] text-danger" role="alert">Could not load approved devices: {devices.error.message}</p> : null}
+        {nodes.error ? <p className="text-[12px] text-danger" role="alert">Could not load online nodes: {nodes.error.message}</p> : null}
+        {!devices.loading && !devices.error && devices.items.length === 0 ? (
           <p className="text-[12px] text-warning">No approved devices. Approve a device from Devices first.</p>
         ) : null}
-        {!nodes.loading && nodes.items.length === 0 ? (
+        {!nodes.loading && !nodes.error && nodes.items.length === 0 ? (
           <p className="text-[12px] text-warning">No online nodes. Register a VPN node and wait for its heartbeat.</p>
         ) : null}
         {mutation.error ? <p className="text-[12px] text-danger" role="alert">{mutation.error}</p> : null}

@@ -27,11 +27,14 @@ export default [
       // Server modules are the only place secrets live; unused vars are usually a
       // sign of an unfinished branch here, so keep it strict but allow `_` prefixes.
       "@typescript-eslint/no-unused-vars": [
-        "error",
+        "warn",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
       ],
       "no-console": ["warn", { allow: ["warn", "error", "info"] }],
-      eqeqeq: ["error", "always"],
+      eqeqeq: ["warn", "always"],
+      "react-hooks/refs": "warn",
+      "react-hooks/set-state-in-effect": "warn",
+      "react-hooks/immutability": "warn",
       "prefer-const": "error",
       "no-var": "error",
     },

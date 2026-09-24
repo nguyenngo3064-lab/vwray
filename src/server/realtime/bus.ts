@@ -92,7 +92,7 @@ export type RealtimeEventName = keyof RealtimeEventMap;
 export type Listener<K extends RealtimeEventName> = (event: RealtimeEventMap[K]) => void;
 
 declare global {
-  // eslint-disable-next-line no-var
+
   var __vwrayBus: EventEmitter | undefined;
 }
 

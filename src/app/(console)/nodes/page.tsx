@@ -108,6 +108,25 @@ export default function NodesPage() {
         </div>
       </div>
 
+      <Panel title="NPV Tunnel setup">
+        <details className="group">
+          <summary className="cursor-pointer text-[12.5px] font-medium text-primary">
+            How to connect NPV Tunnel
+          </summary>
+          <ol className="mt-3 list-decimal space-y-2 pl-5 text-[12px] leading-relaxed text-muted">
+            <li>Install NPV Tunnel and create a new tunnel profile.</li>
+            <li>Choose a node with <span className="font-mono text-primary">ONLINE</span> health in the table below.</li>
+            <li>Use that node&apos;s <span className="font-mono text-primary">Endpoint</span> as the server address and its port.</li>
+            <li>Select the same protocol shown in the node row. Do not mix WireGuard and Xray fields.</li>
+            <li>Enter the client credential from the node profile, then save and connect.</li>
+            <li>Open Devices to approve a new connection, disconnect it, or block it.</li>
+          </ol>
+          <p className="mt-3 border-t border-border pt-3 text-[11.5px] leading-relaxed text-faint">
+            Private keys, passwords, and node tokens are never displayed here. Ask the node operator for the matching client profile through a secure channel.
+          </p>
+        </details>
+      </Panel>
+
       <FilterBar
         filters={[]}
         search={{ value: search, placeholder: "Search nodes…", onChange: setSearch }}

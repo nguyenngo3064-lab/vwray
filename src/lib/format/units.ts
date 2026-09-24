@@ -126,6 +126,18 @@ export function parseGigabytesToBytes(input: string | number | null | undefined)
   return gigabytesToBytes(numeric);
 }
 
+/** Byte counts arrive as decimal strings; BigInt keeps large values exact. */
+export function parseByteCount(value: string | number | bigint | null | undefined): bigint | null {
+  if (value === null || value === undefined || value === "") return null;
+  try {
+    if (typeof value === "bigint") return value;
+    if (typeof value === "number") return Number.isFinite(value) ? BigInt(Math.round(value)) : null;
+    return BigInt(value);
+  } catch {
+    return null;
+  }
+}
+
 export function formatGb(value: number | string | null | undefined, precision = 3): string {
   if (value === null || value === undefined || value === "") return UNAVAILABLE;
   const numeric = typeof value === "number" ? value : Number(value);

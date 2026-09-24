@@ -213,8 +213,17 @@ export async function approveDevice(input: {
   if (device.approvalState === "APPROVED") return { id: device.id, approvalState: device.approvalState };
 
   const defaultQuotaGb = await getSetting<number>("quota.defaultDeviceQuotaGb");
+  const maxApproved = await getSetting<number>("devices.maxApproved");
 
   const updated = await prisma.$transaction(async (tx) => {
+    const approvedCount = await tx.device.count({ where: { approvalState: "APPROVED" } });
+    if (approvedCount >= maxApproved) {
+      throw errors.conflict(
+        `The approved-device limit of ${maxApproved} has been reached. Block or reject an existing device before approving another.`,
+        { maxApproved, approvedCount },
+      );
+    }
+
     const approved = await tx.device.update({
       where: { id: device.id },
       data: {
@@ -444,7 +453,7 @@ export async function updateDevice(input: {
 /** Counts used by the dashboard device strip. Mock-free: counts real rows only where asked. */
 export async function deviceCounts(source?: "REAL" | "MOCK") {
   const where = source ? { samples: { some: { source } } } : {};
-  const [total, online, pending, blocked, quotaExceeded] = await Promise.all([
+  const [total, online, pending, blocked, quotaExceeded, approved, maxApproved] = await Promise.all([
     prisma.device.count({ where }),
     prisma.device.count({ where: { ...where, connectionStatus: "ONLINE" } }),
     prisma.device.count({ where: { ...where, approvalState: "PENDING" } }),
@@ -452,6 +461,8 @@ export async function deviceCounts(source?: "REAL" | "MOCK") {
       where: { ...where, OR: [{ approvalState: "BLOCKED" }, { approvalState: "REJECTED" }] },
     }),
     prisma.device.count({ where: { ...where, connectionStatus: "QUOTA_EXCEEDED" } }),
+    prisma.device.count({ where: { ...where, approvalState: "APPROVED" } }),
+    getSetting<number>("devices.maxApproved"),
   ]);
-  return { total, online, pending, blocked, quotaExceeded };
+  return { total, online, pending, blocked, quotaExceeded, approved, maxApproved };
 }

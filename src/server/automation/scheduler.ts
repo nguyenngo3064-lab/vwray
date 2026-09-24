@@ -15,7 +15,7 @@ import { schedulerTick } from "@/server/automation/service";
  */
 
 declare global {
-  // eslint-disable-next-line no-var
+
   var __vwrayScheduler: boolean | undefined;
 }
 

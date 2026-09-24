@@ -152,7 +152,7 @@ export function useRealtimeStream(windowSeconds: number, paused: boolean): Strea
       source?.close();
     };
     // Reconnect from scratch when the window changes so the buffer matches the chart.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, [windowSeconds]);
 
   function setPaused(next: boolean) {

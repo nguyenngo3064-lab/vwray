@@ -57,7 +57,9 @@ function resolveFontBuffer(): Buffer | null {
   for (const candidate of FONT_CANDIDATES) {
     if (!candidate) continue;
     try {
-      if (existsSync(candidate)) return readFileSync(candidate);
+      if (existsSync(/* turbopackIgnore: true */ candidate)) {
+        return readFileSync(/* turbopackIgnore: true */ candidate);
+      }
     } catch (error) {
       logger.warn("receipt font unreadable", { candidate, error });
     }
@@ -67,7 +69,7 @@ function resolveFontBuffer(): Buffer | null {
 
 /** True when the text cannot be drawn by a WinAnsi base-14 font. */
 function needsUnicodeFont(text: string): boolean {
-  // eslint-disable-next-line no-control-regex
+
   return /[^\x00-\xFF]/.test(text);
 }
 

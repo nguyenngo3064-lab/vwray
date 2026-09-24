@@ -8,6 +8,7 @@ import {
   connectionTone,
   formatDateTime,
   maskIp,
+  readDeviceCounts,
   type DeviceRow,
 } from "../_shared/ops-contract";
 import {
@@ -24,10 +25,10 @@ const PAGE_SIZE = 25;
 type ActionKind = "approve" | "reject" | "block" | "disconnect";
 
 const actionPaths: Record<ActionKind, (id: string, note: string, reason: string) => string> = {
-  approve: (id, note) => `/api/devices/${id}?action=approve`,
-  reject: (id, note) => `/api/devices/${id}?action=reject`,
-  block: (id, _, reason) => `/api/devices/${id}?action=block`,
-  disconnect: (id, _, reason) => `/api/devices/${id}?action=disconnect`,
+  approve: (id, _note) => `/api/devices/${id}?action=approve`,
+  reject: (id, _note) => `/api/devices/${id}?action=reject`,
+  block: (id, _note, _reason) => `/api/devices/${id}?action=block`,
+  disconnect: (id, _note, _reason) => `/api/devices/${id}?action=disconnect`,
 };
 
 const actionBodies: Record<ActionKind, (note: string, reason: string) => Record<string, string>> = {
@@ -58,6 +59,7 @@ export default function DevicesPage() {
   });
 
   const selectedSet = new Set(selectedIds);
+  const counts = readDeviceCounts(list.rawMeta);
 
   function toggle(id: string) {
     setSelectedIds((current) =>
@@ -116,11 +118,36 @@ export default function DevicesPage() {
       <div>
         <h1 className="text-lg font-semibold tracking-tight">Devices</h1>
         <p className="text-[12.5px] text-muted">
-          New devices start as PENDING when PRIVATE MODE is on. Rejected devices get a generic
-          response and no credentials.
+          Monitor active connections, mobile data usage, and access decisions from one place.
         </p>
       </div>
 
+      {counts ? (
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+          {[
+            ["Total devices", counts.total, ""],
+            ["Approved slots", `${counts.approved}/${counts.maxApproved}`, ""],
+            ["Online now", counts.online, "ONLINE"],
+            ["Waiting approval", counts.pending, "PENDING"],
+            ["Blocked", counts.blocked, "BLOCKED"],
+            ["Quota exceeded", counts.quotaExceeded, "QUOTA_EXCEEDED"],
+          ].map(([label, value, filter]) => (
+            <button
+              key={label}
+              type="button"
+              className="panel p-3 text-left transition-colors hover:border-border-strong"
+              onClick={() => {
+                setConnectionStatus(filter === "ONLINE" || filter === "QUOTA_EXCEEDED" ? filter : "");
+                setApprovalState(filter === "PENDING" || filter === "BLOCKED" ? filter : "");
+                setPage(1);
+              }}
+            >
+              <span className="micro-label block">{label}</span>
+              <span className="mt-1 block font-mono text-xl text-primary">{value}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
 
 
       <AsyncPanel
@@ -234,7 +261,12 @@ export default function DevicesPage() {
                     header: "Traffic",
                     align: "right" as const,
                     render: (row) => (
-                      <span className="data-value">{formatBytes(BigInt(row.totalBytes))}</span>
+                      <div className="space-y-0.5 text-right">
+                        <div className="data-value">{formatBytes(BigInt(row.totalBytes))}</div>
+                        <div className="text-[10px] text-faint">
+                          ↑ {formatBytes(BigInt(row.uploadBytes))} · ↓ {formatBytes(BigInt(row.downloadBytes))}
+                        </div>
+                      </div>
                     ),
                   },
                   {
@@ -257,9 +289,15 @@ export default function DevicesPage() {
                     align: "right" as const,
                     render: (row) => (
                       <span className="flex justify-end gap-1.5">
-                        <Button onClick={() => setActing({ id: row.id, action: "approve" })}>Approve</Button>
-                        <Button onClick={() => setActing({ id: row.id, action: "reject" })}>Reject</Button>
-                        <Button variant="danger" onClick={() => setActing({ id: row.id, action: "block" })}>Block</Button>
+                        {row.approvalState === "PENDING" ? (
+                          <Button onClick={() => setActing({ id: row.id, action: "approve" })}>Approve</Button>
+                        ) : null}
+                        {row.connectionStatus === "ONLINE" ? (
+                          <Button onClick={() => setActing({ id: row.id, action: "disconnect" })}>Disconnect</Button>
+                        ) : null}
+                        {row.approvalState !== "BLOCKED" ? (
+                          <Button variant="danger" onClick={() => setActing({ id: row.id, action: "block" })}>Block</Button>
+                        ) : null}
                       </span>
                     ),
                   },

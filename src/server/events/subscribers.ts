@@ -30,7 +30,7 @@ import type { NotificationType } from "@/server/notifications/service";
  */
 
 declare global {
-  // eslint-disable-next-line no-var
+
   var __vwrayCoreSubscribers: boolean | undefined;
 }
 

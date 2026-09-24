@@ -47,7 +47,7 @@ RUN_MIGRATIONS_ON_START="${RUN_MIGRATIONS_ON_START:-true}"
 DB_WAIT_TIMEOUT_SECONDS="${DB_WAIT_TIMEOUT_SECONDS:-60}"
 MIGRATE_MAX_ATTEMPTS="${MIGRATE_MAX_ATTEMPTS:-3}"
 MIGRATE_RETRY_DELAY_SECONDS="${MIGRATE_RETRY_DELAY_SECONDS:-5}"
-PRISMA_CLI="${PRISMA_CLI:-/opt/prisma-cli/node_modules/prisma/build/index.js}"
+PRISMA_CLI="${PRISMA_CLI:-./node_modules/prisma/build/index.js}"
 PORT="${PORT:-3000}"
 HOSTNAME="${HOSTNAME:-0.0.0.0}"
 export PORT HOSTNAME
@@ -79,3 +79,10 @@ esac
 [ "${#AUTH_SECRET}" -ge 32 ] || die "AUTH_SECRET must be at least 32 characters."
 [ -n "${ENCRYPTION_KEY:-}" ] || die "ENCRYPTION_KEY is not set. Generate one with: openssl rand -base64 32"
 [ "${#ENCRYPTION_KEY}" -ge 24 ] || die "ENCRYPTION_KEY must be at least 24 characters (32 base64 bytes)."
+
+if [ "$RUN_MIGRATIONS_ON_START" = "true" ] || [ "$RUN_MIGRATIONS_ON_START" = "1" ] || [ "$RUN_MIGRATIONS_ON_START" = "yes" ]; then
+  log "Applying database migrations"
+  "$PRISMA_CLI" migrate deploy
+fi
+
+exec "$@"

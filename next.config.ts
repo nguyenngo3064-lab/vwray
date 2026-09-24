@@ -15,11 +15,6 @@ const nextConfig: NextConfig = {
   // Pure-JS server libraries are kept external so they are bundled by Node, not
   // by the Turbopack/Webpack server build. Both are CommonJS and dependency-free.
   serverExternalPackages: ["pdf-lib", "qrcode", "@prisma/client", "prisma"],
-  eslint: {
-    // Lint is run as its own CI step (`npm run lint`); failing the build here
-    // would duplicate that work.
-    ignoreDuringBuilds: true,
-  },
 };
 
 export default nextConfig;

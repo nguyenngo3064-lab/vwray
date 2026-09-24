@@ -19,7 +19,7 @@ import type { DomainEventMap, DomainEventName } from "@/server/events/types";
  */
 
 declare global {
-  // eslint-disable-next-line no-var
+
   var __vwrayDomainBus: EventEmitter | undefined;
 }
 

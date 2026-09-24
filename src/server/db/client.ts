@@ -14,7 +14,7 @@ import { logger } from "@/server/lib/logger";
  */
 
 declare global {
-  // eslint-disable-next-line no-var
+
   var __vwrayPrisma: PrismaClient | undefined;
 }
 

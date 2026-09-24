@@ -84,12 +84,14 @@ export class WireGuardAdapter implements VpnAdapter {
   async createClient(spec: VpnClientSpec): Promise<VpnClientHandle> {
     // Real X25519 keypair. Only the public half leaves this function; the private
     // half is rendered into the one-time client configuration by the caller.
-    const { publicKey } = generateKeyPairSync("x25519", {
-      publicKeyEncoding: { type: "spki", format: "der" },
-      privateKeyEncoding: { type: "pkcs8", format: "der" },
-    });
-
-    const publicB64 = Buffer.from(publicKey).toString("base64");
+    let publicB64 = spec.presentedPublicKey ?? "";
+    if (!publicB64) {
+      const { publicKey } = generateKeyPairSync("x25519", {
+        publicKeyEncoding: { type: "spki", format: "der" },
+        privateKeyEncoding: { type: "pkcs8", format: "der" },
+      });
+      publicB64 = Buffer.from(publicKey).toString("base64");
+    }
 
     const handle: VpnClientHandle = {
       gatewayIdentifier: `peer:${publicB64.slice(0, 12)}`,

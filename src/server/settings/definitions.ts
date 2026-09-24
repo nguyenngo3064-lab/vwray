@@ -80,6 +80,15 @@ export const SETTING_DEFINITIONS = [
     impact: "Returned verbatim to untrusted clients, so it must leak nothing.",
   }),
 
+  define({
+    key: "devices.maxApproved",
+    category: "SECURITY",
+    description: "Maximum number of approved devices allowed to use the network at once.",
+    schema: z.number().int().min(1).max(10_000),
+    defaultValue: 5,
+    impact: "New devices remain pending when the limit is reached and cannot receive network access.",
+  }),
+
   // ------------------------------------------------------------- security ----
   define({
     key: "security.maskSourceIps",

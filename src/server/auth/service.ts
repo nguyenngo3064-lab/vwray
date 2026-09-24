@@ -64,7 +64,8 @@ export async function ensureBootstrapOwner(): Promise<
   if (existing > 0) return { created: false };
 
   const username = "owner";
-  const accessCode = generateAccessCode();
+  const env = getEnv();
+  const accessCode = env.isDevelopment ? env.DEFAULT_ACCESS_CODE.trim().toUpperCase() : generateAccessCode();
   const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30);
 
   const user = await prisma.$transaction(async (tx) => {
@@ -140,7 +141,9 @@ export async function loginWithAccessCode(input: LoginInput): Promise<SessionCon
     include: { createdBy: { select: { id: true, username: true, role: true, status: true } } },
   });
 
-  const matched = codes.find((code) => verifySecret(normalized, code.codeHash));
+  const matched = codes.find(
+    (code) => verifySecret(normalized, code.codeHash) || verifySecret(input.accessCode.trim(), code.codeHash),
+  );
 
   if (!matched) {
     await recordAuthAttempt({

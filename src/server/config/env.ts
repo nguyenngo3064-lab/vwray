@@ -54,6 +54,7 @@ const envSchema = z.object({
 
   AUTH_SECRET: secret("AUTH_SECRET", 32),
   ENCRYPTION_KEY: secret("ENCRYPTION_KEY", 24),
+  DEFAULT_ACCESS_CODE: z.string().min(4).default("admin9785"),
   SESSION_ABSOLUTE_TTL_MINUTES: intString(720, 5, 60 * 24 * 90),
   SESSION_IDLE_TTL_MINUTES: intString(120, 1, 60 * 24 * 30),
   AUTH_MAX_ATTEMPTS_PER_WINDOW: intString(8, 1, 1000),
@@ -63,6 +64,7 @@ const envSchema = z.object({
 
   VPN_API_URL: optionalString,
   VPN_API_KEY: optionalString,
+  WIREGUARD_SERVER_PUBLIC_KEY: optionalString,
   GATEWAY_AGENT_TOKEN: optionalString,
   GATEWAY_MAX_CLOCK_SKEW_SECONDS: intString(300, 5, 86_400),
   DEV_MOCK_GATEWAY_ENABLED: boolString,

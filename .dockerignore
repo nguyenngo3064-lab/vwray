@@ -70,13 +70,9 @@ yarn-error.log*
 # ------------------------------------------------------- ops-only descriptors --
 # These change on ops branches and have no effect on the image content. Ignoring
 # them keeps the `COPY . .` layer cacheable across infrastructure-only commits.
-Dockerfile
-Dockerfile.*
-.dockerignore
+# Deployment manifests are intentionally kept in the build context.
 docker-compose.yml
 docker-compose.*.yml
-railway.json
-render.yaml
 Procfile
 README.md
 docs

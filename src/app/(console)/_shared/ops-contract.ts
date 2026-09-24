@@ -68,6 +68,8 @@ export interface NodeRef {
 export interface DeviceCounts {
   total: number;
   online: number;
+  approved: number;
+  maxApproved: number;
   pending: number;
   blocked: number;
   quotaExceeded: number;
@@ -892,19 +894,23 @@ export function readDeviceCounts(rawMeta: unknown): DeviceCounts | null {
   const record = counts as Record<string, unknown>;
   const total = record.total;
   const online = record.online;
+  const approved = record.approved;
+  const maxApproved = record.maxApproved;
   const pending = record.pending;
   const blocked = record.blocked;
   const quotaExceeded = record.quotaExceeded;
   if (
     typeof total !== "number" ||
     typeof online !== "number" ||
+    typeof approved !== "number" ||
+    typeof maxApproved !== "number" ||
     typeof pending !== "number" ||
     typeof blocked !== "number" ||
     typeof quotaExceeded !== "number"
   ) {
     return null;
   }
-  return { total, online, pending, blocked, quotaExceeded };
+  return { total, online, approved, maxApproved, pending, blocked, quotaExceeded };
 }
 
 // ------------------------------------------------------------ error mapping ---

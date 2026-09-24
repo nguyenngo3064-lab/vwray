@@ -4,6 +4,7 @@ import { prisma } from "@/server/db/client";
 import { errors } from "@/server/lib/errors";
 import { record } from "@/server/audit";
 import { getSetting } from "@/server/settings/service";
+import { getEnv } from "@/server/config/env";
 import { adapterKeyFor, getAdapter } from "@/server/vpn/registry";
 import { fingerprintOf, sealSecret, sha256Hex, unsealSecret } from "@/server/lib/crypto";
 import type { XrayAdapter } from "@/server/vpn/adapters/xray";
@@ -224,11 +225,22 @@ export async function generateConfig(input: {
     publicCredential = Buffer.from(publicKey).toString("base64");
     const privateCredential = Buffer.from(privateKey).toString("base64");
     secretToSeal = privateCredential;
+    const serverPublicKey = getEnv().WIREGUARD_SERVER_PUBLIC_KEY;
+    if (!serverPublicKey) {
+      throw errors.precondition("WIREGUARD_SERVER_PUBLIC_KEY is required to generate a valid client profile.");
+    }
+
+    await adapter.createClient({
+      deviceId: device.deviceId,
+      displayName: device.displayName,
+      nodeId: node.nodeId,
+      presentedPublicKey: publicCredential,
+    });
 
     payload = renderWireGuard({
       address: "10.200.0.2/32",
       privateKey: privateCredential,
-      serverPublicKey: publicCredential,
+      serverPublicKey,
       endpoint: node.publicEndpoint,
       port: node.port,
       dns: "1.1.1.1",
@@ -270,7 +282,7 @@ export async function generateConfig(input: {
   // Credential + versions + assignment in one transaction, so the console can never
   // hold a config row that points at a credential that was never stored.
   const { config, version } = await prisma.$transaction(async (tx) => {
-    const credential = await tx.deviceCredential.create({
+    await tx.deviceCredential.create({
       data: {
         deviceId: device.id,
         kind: credentialKind,

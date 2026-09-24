@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import QRCode from "qrcode";
 import { Button, DataTable, EmptyState, Pagination, StatusPill, Select, Panel, type TableColumn } from "@/components/ui/primitives";
 import {
   formatDateTime,
@@ -31,6 +32,7 @@ export default function ConfigurationsPage() {
   const [nodeId, setNodeId] = useState("");
   const [protocol, setProtocol] = useState("WIREGUARD");
   const [generated, setGenerated] = useState<{ payload: string; format: string; summary: string } | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const mutation = useActionRunner();
   const columns = configColumns((action, id) => setActing({ action, id }));
 
@@ -61,12 +63,20 @@ export default function ConfigurationsPage() {
     if (outcome.ok) {
       setGenerated(outcome.data);
       if (protocol === "WIREGUARD") {
+        const qrUrl = await QRCode.toDataURL(outcome.data.payload, {
+          margin: 1,
+          width: 240,
+          errorCorrectionLevel: "M",
+        });
+        setQrDataUrl(qrUrl);
         try {
           await navigator.clipboard.writeText(outcome.data.payload);
         } catch {
           // Clipboard permission can be unavailable in an embedded browser.
         }
         window.location.href = "wireguard://";
+      } else {
+        setQrDataUrl(null);
       }
     }
   }
@@ -180,6 +190,15 @@ export default function ConfigurationsPage() {
               </div>
             </div>
             <textarea readOnly value={generated.payload} className="input min-h-40 w-full resize-y font-mono text-[11px]" aria-label="Generated configuration" />
+            {generated.format === "wireguard" && qrDataUrl ? (
+              <div className="flex flex-col gap-2 rounded border border-border bg-panel p-3">
+                <p className="text-[11.5px] font-medium text-primary">WireGuard QR code</p>
+                <img src={qrDataUrl} alt="WireGuard QR code" className="h-52 w-52 rounded bg-white p-2" />
+                <p className="text-[11.5px] leading-relaxed text-faint">
+                  Open WireGuard and scan this QR code. The config also copied to clipboard automatically.
+                </p>
+              </div>
+            ) : null}
             {generated.format === "wireguard" ? (
               <p className="text-[11.5px] leading-relaxed text-faint">
                 Open WireGuard copies the profile first and opens the installed app. If the app does not open automatically, use Download and import the .conf file from WireGuard.

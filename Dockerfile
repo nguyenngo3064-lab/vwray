@@ -8,6 +8,8 @@ RUN npm ci
 
 FROM deps AS builder
 WORKDIR /app
+ARG DATABASE_URL=postgresql://vwray:build-only@localhost:5432/vwray?schema=public
+ENV DATABASE_URL=$DATABASE_URL
 ENV NODE_OPTIONS=--max-old-space-size=1536
 ENV AUTH_SECRET=build-only-auth-secret-not-used-at-runtime
 ENV ENCRYPTION_KEY=build-only-encryption-key-not-used-at-runtime

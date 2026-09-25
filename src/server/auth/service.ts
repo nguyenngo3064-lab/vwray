@@ -10,7 +10,7 @@ import {
   sha256Hex,
   verifySecret,
 } from "@/server/lib/crypto";
-import { generateAccessCode, hintFor, randomToken, safeEqual } from "@/server/lib/ids";
+import { hintFor, randomToken, safeEqual } from "@/server/lib/ids";
 import { recordAuthAttempt, checkAuthRateLimit } from "@/server/auth/rate-limit";
 import { record, userActor } from "@/server/audit";
 import {
@@ -65,7 +65,7 @@ export async function ensureBootstrapOwner(): Promise<
 
   const username = "owner";
   const env = getEnv();
-  const accessCode = env.isDevelopment ? env.DEFAULT_ACCESS_CODE.trim().toUpperCase() : generateAccessCode();
+  const accessCode = env.DEFAULT_ACCESS_CODE.trim().toUpperCase();
   const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30);
 
   const user = await prisma.$transaction(async (tx) => {

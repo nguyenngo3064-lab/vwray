@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import { Button, DataTable, EmptyState, Pagination, StatusPill, Select, Panel, type TableColumn } from "@/components/ui/primitives";
 import {
@@ -44,6 +44,19 @@ export default function ConfigurationsPage() {
   });
   const devices = useList<DeviceRow>("/api/devices", { approvalState: "APPROVED", pageSize: 100 });
   const nodes = useList<NodeRow>("/api/nodes", { health: "ONLINE", protocol, pageSize: 100 });
+
+  useEffect(() => {
+    const source = new EventSource("/api/realtime/stream");
+    const refreshDevices = () => devices.refresh();
+    const refreshNodes = () => nodes.refresh();
+    source.addEventListener("device.update", refreshDevices);
+    source.addEventListener("node.update", refreshNodes);
+    return () => {
+      source.removeEventListener("device.update", refreshDevices);
+      source.removeEventListener("node.update", refreshNodes);
+      source.close();
+    };
+  }, [devices.refresh, nodes.refresh]);
 
   const totalConfigs = list.meta.total;
   const activeCount = list.items?.filter((c) => c.status === "ACTIVE").length ?? 0;

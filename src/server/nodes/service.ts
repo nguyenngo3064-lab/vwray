@@ -3,7 +3,7 @@ import { prisma } from "@/server/db/client";
 import { errors } from "@/server/lib/errors";
 import { sha256Hex, sealSecret, unsealSecret, fingerprintOf } from "@/server/lib/crypto";
 import { generateNodeId, randomToken } from "@/server/lib/ids";
-import { record } from "@/server/audit";
+import { record, systemActor } from "@/server/audit";
 import { getAdapter, adapterKeyFor } from "@/server/vpn/registry";
 import { getSetting } from "@/server/settings/service";
 import type { WireGuardAdapter } from "@/server/vpn/adapters/wireguard";
@@ -125,6 +125,7 @@ async function assertNodeExists(nodeId: string) {
  * value here is node-scoped). Only the hash is stored.
  */
 export async function createNode(input: {
+  nodeId?: string;
   name: string;
   location: string;
   provider?: string | null;
@@ -136,12 +137,12 @@ export async function createNode(input: {
   maxSessions?: number | null;
   weight?: number;
   tags?: string[];
-  actorId: string;
-  actorLabel: string;
+  actorId?: string;
+  actorLabel?: string;
   sourceIp?: string | null;
 }) {
   const secret = randomToken(24);
-  const nodeId = generateNodeId("node");
+  const nodeId = input.nodeId ?? generateNodeId("node");
   const token = `vwrt.${nodeId}.${secret}`;
 
   const node = await prisma.vpnNode.create({
@@ -164,7 +165,9 @@ export async function createNode(input: {
   });
 
   await record({
-    actor: { type: "USER", id: input.actorId, label: input.actorLabel },
+    actor: input.actorId
+      ? { type: "USER", id: input.actorId, label: input.actorLabel ?? "operator" }
+      : systemActor,
     action: "node.created",
     resource: "vpn_node",
     resourceId: node.id,
@@ -179,6 +182,59 @@ export async function createNode(input: {
     /** Shown once. Store it in the gateway agent, then lose it on purpose. */
     agentToken: token,
   };
+}
+
+/** Registers an agent using a stable installation identity, without a console session. */
+export async function registerNodeAgent(input: {
+  nodeId: string;
+  name: string;
+  location: string;
+  publicEndpoint: string;
+  port: number;
+  protocol: "WIREGUARD" | "XRAY_VLESS" | "XRAY_VMESS" | "XRAY_TROJAN" | "MOCK";
+  isRealGateway: boolean;
+  sourceIp?: string | null;
+}) {
+  const existing = await prisma.vpnNode.findUnique({ where: { nodeId: input.nodeId } });
+  if (existing) {
+    const created = await createNodeTokenFor(existing.id, existing.nodeId);
+    await prisma.vpnNode.update({
+      where: { id: existing.id },
+      data: {
+        name: input.name.slice(0, 80),
+        location: input.location.slice(0, 80),
+        publicEndpoint: input.publicEndpoint.slice(0, 120),
+        port: input.port,
+        protocol: input.protocol,
+        adapterKey: input.protocol === "WIREGUARD" ? "wireguard" : input.protocol === "MOCK" ? "mock" : "xray",
+        isRealGateway: input.isRealGateway,
+      },
+    });
+    return { id: existing.id, nodeId: existing.nodeId, agentToken: created.token };
+  }
+
+  return createNode({
+    nodeId: input.nodeId,
+    name: input.name,
+    location: input.location,
+    publicEndpoint: input.publicEndpoint,
+    port: input.port,
+    protocol: input.protocol,
+    adapterKey: input.protocol === "WIREGUARD" ? "wireguard" : input.protocol === "MOCK" ? "mock" : "xray",
+    isRealGateway: input.isRealGateway,
+    actorLabel: "node-enrollment",
+    sourceIp: input.sourceIp,
+  });
+}
+
+async function createNodeTokenFor(id: string, nodeId: string) {
+  const secret = randomToken(24);
+  const token = `vwrt.${nodeId}.${secret}`;
+  await prisma.vpnNode.update({
+    where: { id },
+    data: { agentTokenHash: sha256Hex(token), agentTokenHint: `${token.slice(0, 9)}...${token.slice(-4)}` },
+  });
+  return { token };
 }
 
 /** Rotates a node token: the old one stops working immediately. */

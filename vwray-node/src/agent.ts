@@ -17,6 +17,7 @@ import {
 export type NodeStatus = "STARTING" | "REGISTERING" | "AUTHENTICATING" | "HEARTBEAT" | "ONLINE" | "OFFLINE" | "REVOKED";
 
 export interface NodeRegistrationPayload {
+  nodeId: string;
   name: string;
   location: string;
   publicEndpoint: string;
@@ -50,6 +51,7 @@ export interface NodeRuntime {
   controlPlaneUrl: string;
   nodeId: string | null;
   nodeToken: string | null;
+  lastHeartbeatAt: string | null;
   capabilities: string[];
   readState(): { status: NodeStatus; port: number; publicEndpoint: string | null; controlPlaneUrl: string; nodeId: string | null; nodeToken: string | null; capabilities: string[]; };
   start(): Promise<void>;
@@ -57,8 +59,18 @@ export interface NodeRuntime {
   sendHeartbeat(): Promise<void>;
 }
 
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
+const INITIAL_RETRY_DELAY_MS = 2_000;
+const MAX_RETRY_DELAY_MS = 30_000;
+
 function defaultCredentialPath(): string {
   return join(homedir(), ".config", "vwray-node", "credentials.json");
+}
+
+async function stableNodeId(path: string): Promise<string> {
+  const existing = await loadCredentials(path);
+  if (existing?.nodeId) return existing.nodeId;
+  return process.env.NODE_ID?.trim() || `node-${randomUUID()}`;
 }
 
 export async function loadCredentials(path = defaultCredentialPath()): Promise<StoredCredentials | null> {
@@ -88,6 +100,10 @@ function getControlPlaneUrl(input?: string): string {
   const env = readEnv();
   const raw = input ?? env.CONTROL_PLANE_URL ?? env.VWRAY_CONTROL_PLANE_URL ?? "http://localhost:3000";
   return raw.replace(/\/+$/, "");
+}
+
+function log(runtime: NodeRuntime, message: string): void {
+  console.info(`[vwray-node] ${message}`);
 }
 
 function normalizeNodeLocation(input?: string): string {
@@ -122,7 +138,7 @@ export async function createRuntime(options: NodeRuntimeOptions = {}): Promise<N
   const env = readEnv();
   const port = options.port ?? detectPort(env);
   const controlPlaneUrl = getControlPlaneUrl(options.controlPlaneUrl);
-  const publicEndpoint = detectPublicEndpoint(env, port) ?? `http://localhost:${port}`;
+  const publicEndpoint = detectPublicEndpoint(env, port);
   const capabilities = detectCapabilities(detectSupportForWireguard());
   const runtime: NodeRuntime = {
     status: "STARTING",
@@ -131,6 +147,7 @@ export async function createRuntime(options: NodeRuntimeOptions = {}): Promise<N
     controlPlaneUrl,
     nodeId: null,
     nodeToken: null,
+    lastHeartbeatAt: null,
     capabilities,
     readState() {
       return {
@@ -140,25 +157,36 @@ export async function createRuntime(options: NodeRuntimeOptions = {}): Promise<N
         controlPlaneUrl: runtime.controlPlaneUrl,
         nodeId: runtime.nodeId,
         nodeToken: runtime.nodeToken,
+        lastHeartbeatAt: runtime.lastHeartbeatAt,
         capabilities: runtime.capabilities,
       };
     },
     async start() {
-      const creds = await loadCredentials(options.credentialPath ?? defaultCredentialPath());
+      const credentialPath = options.credentialPath ?? defaultCredentialPath();
+      log(runtime, "Starting");
+      log(runtime, `Control Plane: ${env.CONTROL_PLANE_URL || env.VWRAY_CONTROL_PLANE_URL ? "configured" : "defaulted"}`);
+      log(runtime, `Port: ${port}`);
+      const creds = await loadCredentials(credentialPath);
       if (creds) {
         runtime.nodeId = creds.nodeId;
         runtime.nodeToken = creds.nodeToken;
         runtime.status = "AUTHENTICATING";
       } else {
         runtime.status = "REGISTERING";
-        await runtime.registerIfNeeded();
       }
 
       const server = createServer(async (request, response) => {
         const url = new URL(request.url ?? "/", "http://localhost");
         if (url.pathname === "/health") {
           response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-          response.end(JSON.stringify({ status: "ok", service: "vwray-node", online: runtime.status === "ONLINE" }));
+          response.end(JSON.stringify({
+            status: runtime.status,
+            service: "vwray-node",
+            online: runtime.status === "ONLINE",
+            nodeId: runtime.nodeId,
+            port: runtime.port,
+            lastHeartbeatAt: runtime.lastHeartbeatAt,
+          }));
           return;
         }
         if (url.pathname === "/ready") {
@@ -171,21 +199,35 @@ export async function createRuntime(options: NodeRuntimeOptions = {}): Promise<N
       });
 
       server.listen(port, "0.0.0.0", () => {
-        console.log(`[Node] listening on ${port} and reporting as ${runtime.status}`);
+        log(runtime, `Listening on ${port} and reporting as ${runtime.status}`);
       });
 
       await new Promise<void>((resolve) => {
         server.once("listening", resolve);
       });
 
-      setInterval(() => {
-        void runtime.sendHeartbeat().catch((error: unknown) => {
+      const heartbeatInterval = Number(env.HEARTBEAT_INTERVAL_MS ?? DEFAULT_HEARTBEAT_INTERVAL_MS);
+      let retryDelay = INITIAL_RETRY_DELAY_MS;
+      const heartbeatLoop = async (): Promise<void> => {
+        try {
+          if (!runtime.nodeToken || !runtime.nodeId) {
+            log(runtime, "Registering...");
+            await runtime.registerIfNeeded();
+            log(runtime, "Registered");
+            log(runtime, "Heartbeat started");
+          }
+          await runtime.sendHeartbeat();
+          retryDelay = INITIAL_RETRY_DELAY_MS;
+          if (runtime.status === "ONLINE") log(runtime, "ONLINE");
+          setTimeout(() => void heartbeatLoop(), heartbeatInterval);
+        } catch (error: unknown) {
           runtime.status = "OFFLINE";
-          console.error("[Node] heartbeat failed:", error instanceof Error ? error.message : String(error));
-        });
-      }, Number(env.HEARTBEAT_INTERVAL_MS ?? 15000));
-
-      await runtime.sendHeartbeat();
+          console.error("[vwray-node] connection failed:", error instanceof Error ? error.message : String(error));
+          setTimeout(() => void heartbeatLoop(), retryDelay);
+          retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY_MS);
+        }
+      };
+      void heartbeatLoop();
     },
     async registerIfNeeded() {
       const env = readEnv();
@@ -199,18 +241,26 @@ export async function createRuntime(options: NodeRuntimeOptions = {}): Promise<N
 
       const nodeName = createNodeName(env);
       const payload: NodeRegistrationPayload = {
+        nodeId: await stableNodeId(options.credentialPath ?? defaultCredentialPath()),
         name: options.nodeName ?? nodeName,
         location: normalizeNodeLocation(options.location),
-        publicEndpoint: detectPublicEndpoint(env, port) ?? `http://localhost:${port}`,
+        publicEndpoint: detectPublicEndpoint(env, port) ?? "",
         port,
         protocol: normalizeProtocol(options.protocol, detectSupportForWireguard()),
         capabilities,
         isRealGateway: detectSupportForWireguard(),
       };
 
-      const response = await fetch(new URL("/api/nodes", controlPlaneUrl).toString(), {
+      if (!payload.publicEndpoint) {
+        throw new Error("REGISTRATION_FAILED: PUBLIC_ENDPOINT or RAILWAY_PUBLIC_DOMAIN is required in production.");
+      }
+
+      const response = await fetch(new URL("/api/nodes/register", controlPlaneUrl).toString(), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-vwray-enrollment-token": env.NODE_ENROLLMENT_TOKEN ?? "",
+        },
         body: JSON.stringify(payload),
       });
 
@@ -219,12 +269,13 @@ export async function createRuntime(options: NodeRuntimeOptions = {}): Promise<N
         throw new Error(`Node registration failed (${response.status}): ${body}`);
       }
 
-      const data = (await response.json()) as {
+      const envelope = (await response.json()) as { data?: {
         node?: { nodeId?: string; id?: string };
         agentToken?: string;
-      };
+      } };
+      const data = envelope.data ?? {};
       const token = data.agentToken;
-      const nodeId = data.node?.nodeId ?? data.node?.id ?? `node-${randomUUID().slice(0, 8)}`;
+      const nodeId = data.node?.nodeId ?? data.node?.id ?? payload.nodeId;
       if (!token) {
         throw new Error("Control plane registration did not include an agent token.");
       }
@@ -274,10 +325,16 @@ export async function createRuntime(options: NodeRuntimeOptions = {}): Promise<N
 
       if (!response.ok) {
         const detail = await response.text();
+        if (response.status === 401 || response.status === 403) {
+          runtime.nodeId = null;
+          runtime.nodeToken = null;
+          runtime.status = "REGISTERING";
+        }
         throw new Error(`Heartbeat failed (${response.status}): ${detail}`);
       }
 
       runtime.status = "ONLINE";
+      runtime.lastHeartbeatAt = new Date().toISOString();
       runtime.publicEndpoint = detectPublicEndpoint(readEnv(), runtime.port) ?? runtime.publicEndpoint;
     },
   };

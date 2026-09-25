@@ -7,12 +7,16 @@ A standalone VWRAY node agent that auto-registers with the control plane, persis
 ```bash
 CONTROL_PLANE_URL=http://localhost:3000 \
 NODE_NAME=vwray-node-01 \
-npx tsx vwray-node/src/index.ts
+npm run build && npm start
 ```
+
+Use `npm run dev` only for local TypeScript development. The Docker image builds
+the TypeScript source into `dist` and starts the compiled JavaScript process.
 
 ## Configuration
 
 - CONTROL_PLANE_URL — base URL of the VWRAY control plane
+- NODE_ENROLLMENT_TOKEN — one-time enrollment secret configured on the control plane
 - NODE_NAME — stable node label
 - NODE_LOCATION — human-readable location label
 - NODE_PROTOCOL — WIREGUARD, XRAY_VLESS, XRAY_VMESS, XRAY_TROJAN, or MOCK
@@ -22,3 +26,9 @@ npx tsx vwray-node/src/index.ts
 - HEARTBEAT_INTERVAL_MS — heartbeat cadence in milliseconds
 
 The agent stores its credential in ~/.config/vwray-node/credentials.json and will reuse it across restarts.
+
+For Railway, set `CONTROL_PLANE_URL`, `NODE_ENROLLMENT_TOKEN`, and either
+`PUBLIC_ENDPOINT` or use Railway's `RAILWAY_PUBLIC_DOMAIN`. The control plane must
+also have the same `NODE_ENROLLMENT_TOKEN` configured. The node reports `MOCK`
+unless actual WireGuard support is detected; `ONLINE` only means authenticated
+control-plane heartbeats are succeeding.

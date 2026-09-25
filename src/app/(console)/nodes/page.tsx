@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, DataTable, EmptyState, Pagination, StatusPill, Select, Input, Panel, type TableColumn } from "@/components/ui/primitives";
 import {
   formatDateTime,
@@ -45,6 +45,16 @@ export default function NodesPage() {
 
   const totalNodes = list.meta.total;
   const onlineCount = list.items?.filter((n) => n.health === "ONLINE").length ?? 0;
+
+  useEffect(() => {
+    const source = new EventSource("/api/realtime/stream");
+    const refresh = () => list.refresh();
+    source.addEventListener("node.update", refresh);
+    return () => {
+      source.removeEventListener("node.update", refresh);
+      source.close();
+    };
+  }, [list.refresh]);
 
   async function submit() {
     if (!acting) return false;

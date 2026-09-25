@@ -73,6 +73,14 @@ enum NodeHealthState {
   MAINTENANCE
 }
 
+enum NodeStatus {
+  REGISTERING
+  ONLINE
+  OFFLINE
+  DEGRADED
+  REVOKED
+}
+
 enum NodeProtocol {
   WIREGUARD
   XRAY_VLESS
@@ -375,6 +383,7 @@ model VpnNode {
   publicEndpoint String
   port           Int
   protocol       NodeProtocol
+  status         NodeStatus      @default(REGISTERING)
   health         NodeHealthState @default(UNKNOWN)
 
   /// SHA-256 of the node's agent token. Plaintext is returned once at creation.
@@ -418,6 +427,7 @@ model VpnNode {
   timeline       ConnectionEvent[]
 
   @@index([health])
+  @@index([status])
   @@index([lastHeartbeatAt])
   @@index([draining])
   @@map("vpn_node")

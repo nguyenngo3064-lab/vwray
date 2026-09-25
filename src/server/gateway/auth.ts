@@ -74,6 +74,10 @@ export async function authenticateAgent(request: Request): Promise<AgentAuthResu
   const node = await prisma.vpnNode.findUnique({ where: { nodeId: parsed.nodeId } });
   if (!node) throw errors.unauthenticated("Gateway token is not valid.");
 
+  if (node.status === "REVOKED") {
+    throw errors.nodeRevoked();
+  }
+
   if (!safeEqual(sha256Hex(token), node.agentTokenHash)) {
     throw errors.unauthenticated("Gateway token is not valid.");
   }

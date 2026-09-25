@@ -38,6 +38,8 @@ export type DisplayHealth =
   | "DRAINING"
   | "MAINTENANCE";
 
+export type NodeStatus = "REGISTERING" | "ONLINE" | "OFFLINE" | "DEGRADED" | "REVOKED";
+
 export function deriveHealth(input: {
   lastHeartbeatAt: Date | null;
   staleSeconds: number;
@@ -74,6 +76,7 @@ export async function listNodes(filters?: {
     id: node.id,
     nodeId: node.nodeId,
     name: node.name,
+    status: node.status,
     location: node.location,
     provider: node.provider,
     publicEndpoint: node.publicEndpoint,
@@ -154,6 +157,7 @@ export async function createNode(input: {
       publicEndpoint: input.publicEndpoint.slice(0, 120),
       port: input.port,
       protocol: input.protocol,
+      status: "REGISTERING",
       adapterKey: input.adapterKey.slice(0, 40),
       isRealGateway: input.isRealGateway,
       maxSessions: input.maxSessions ?? null,
@@ -197,6 +201,9 @@ export async function registerNodeAgent(input: {
 }) {
   const existing = await prisma.vpnNode.findUnique({ where: { nodeId: input.nodeId } });
   if (existing) {
+    if (existing.status === "REVOKED") {
+      throw errors.nodeRevoked();
+    }
     const created = await createNodeTokenFor(existing.id, existing.nodeId);
     await prisma.vpnNode.update({
       where: { id: existing.id },
@@ -206,6 +213,7 @@ export async function registerNodeAgent(input: {
         publicEndpoint: input.publicEndpoint.slice(0, 120),
         port: input.port,
         protocol: input.protocol,
+        status: "REGISTERING",
         adapterKey: input.protocol === "WIREGUARD" ? "wireguard" : input.protocol === "MOCK" ? "mock" : "xray",
         isRealGateway: input.isRealGateway,
       },
@@ -246,6 +254,7 @@ export async function rotateNodeToken(input: {
 }) {
   const node = await prisma.vpnNode.findUnique({ where: { id: input.nodeId } });
   if (!node) throw errors.notFound("Node");
+  if (node.status === "REVOKED") throw errors.nodeRevoked();
 
   const secret = randomToken(24);
   const token = `vwrt.${node.nodeId}.${secret}`;
@@ -289,6 +298,7 @@ export async function updateNode(input: {
 }) {
   const node = await prisma.vpnNode.findUnique({ where: { id: input.nodeId } });
   if (!node) throw errors.notFound("Node");
+  if (node.status === "REVOKED") throw errors.nodeRevoked();
 
   const updated = await prisma.vpnNode.update({
     where: { id: node.id },
@@ -350,6 +360,36 @@ export async function removeNode(input: {
   return { removed: true };
 }
 
+export async function revokeNode(input: {
+  nodeId: string;
+  actorId: string;
+  actorLabel: string;
+  sourceIp?: string | null;
+}) {
+  const node = await prisma.vpnNode.findUnique({ where: { id: input.nodeId } });
+  if (!node) throw errors.notFound("Node");
+
+  if (node.status !== "REVOKED") {
+    await prisma.vpnNode.update({
+      where: { id: node.id },
+      data: { status: "REVOKED", agentTokenHash: `revoked:${randomToken(24)}` },
+    });
+  }
+
+  await record({
+    actor: { type: "USER", id: input.actorId, label: input.actorLabel },
+    action: "node.revoked",
+    resource: "vpn_node",
+    resourceId: node.id,
+    result: "SUCCESS",
+    sourceIp: input.sourceIp,
+    metadata: { nodeId: node.nodeId, name: node.name },
+  });
+
+  publish("node.update", { ts: Date.now(), nodeId: node.nodeId, health: "OFFLINE", lastHeartbeatAt: null });
+  return { revoked: true, status: "REVOKED" as const };
+}
+
 /**
  * Applies an agent heartbeat: metrics, health sample and last-heartbeat clock.
  *
@@ -375,6 +415,7 @@ export async function applyHeartbeat(
   const staleSeconds = await getSetting<number>("nodes.heartbeatStaleSeconds");
   const previous = await prisma.vpnNode.findUnique({ where: { id: nodeId } });
   if (!previous) return;
+  if (previous.status === "REVOKED") throw errors.nodeRevoked();
 
   const at = options?.at ?? new Date();
 
@@ -388,6 +429,7 @@ export async function applyHeartbeat(
       version: input.version ?? undefined,
       agentVersion: input.agentVersion ?? undefined,
       lastHeartbeatAt: at,
+      status: "ONLINE",
     },
   });
 
@@ -465,7 +507,7 @@ export async function sweepStaleNodes(): Promise<number> {
       draining: node.draining,
     });
     if (derived === "OFFLINE" && node.health !== "OFFLINE") {
-      await prisma.vpnNode.update({ where: { id: node.id }, data: { health: "OFFLINE" } });
+      await prisma.vpnNode.update({ where: { id: node.id }, data: { health: "OFFLINE", status: node.status === "REVOKED" ? "REVOKED" : "OFFLINE" } });
       await notify({
         type: "node.offline",
         severity: "CRITICAL",
@@ -475,8 +517,9 @@ export async function sweepStaleNodes(): Promise<number> {
         resourceId: node.id,
       });
       marked += 1;
-    } else if (derived !== "OFFLINE" && node.health === "OFFLINE") {
-      await prisma.vpnNode.update({ where: { id: node.id }, data: { health: derived } });
+    } else if (derived !== "OFFLINE" && node.health === "OFFLINE" && node.status !== "REVOKED") {
+      const status = derived === "ONLINE" || derived === "DEGRADED" ? derived : node.status;
+      await prisma.vpnNode.update({ where: { id: node.id }, data: { health: derived, status } });
     }
   }
 

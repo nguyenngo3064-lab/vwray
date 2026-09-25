@@ -60,10 +60,11 @@ export default function ConfigurationsPage() {
 
   const totalConfigs = list.meta.total;
   const activeCount = list.items?.filter((c) => c.status === "ACTIVE").length ?? 0;
+  const availableNodes = (nodes.items ?? []).filter((node) => node.status === "ONLINE");
 
   async function generateConfiguration() {
     const selectedDeviceId = deviceId || devices.items[0]?.id || "";
-    const selectedNodeId = nodeId || nodes.items[0]?.id || "";
+    const selectedNodeId = nodeId || availableNodes[0]?.id || "";
     if (!selectedDeviceId || !selectedNodeId) {
       mutation.setError(new Error("Choose an approved device and an online node first."));
       return;
@@ -145,9 +146,9 @@ export default function ConfigurationsPage() {
           </label>
           <label className="space-y-1">
             <span className="micro-label block">Online node</span>
-            <Select value={nodeId || nodes.items[0]?.id || ""} onChange={(event) => setNodeId(event.target.value)}>
+            <Select value={nodeId || availableNodes[0]?.id || ""} onChange={(event) => setNodeId(event.target.value)}>
               <option value="">Choose node</option>
-              {nodes.items.map((node) => <option key={node.id} value={node.id}>{node.name} · {node.publicEndpoint}</option>)}
+              {availableNodes.map((node) => <option key={node.id} value={node.id}>{node.name} · {node.publicEndpoint}</option>)}
             </Select>
           </label>
           <label className="space-y-1">
@@ -168,7 +169,7 @@ export default function ConfigurationsPage() {
         {!devices.loading && !devices.error && devices.items.length === 0 ? (
           <p className="text-[12px] text-warning">No approved devices. Approve a device from Devices first.</p>
         ) : null}
-        {!nodes.loading && !nodes.error && nodes.items.length === 0 ? (
+        {!nodes.loading && !nodes.error && availableNodes.length === 0 ? (
           <p className="text-[12px] text-warning">No online nodes. Register a VPN node and wait for its heartbeat.</p>
         ) : null}
         {mutation.error ? <p className="text-[12px] text-danger" role="alert">{mutation.error}</p> : null}

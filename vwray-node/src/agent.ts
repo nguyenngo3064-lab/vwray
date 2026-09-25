@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -221,6 +221,12 @@ export async function createRuntime(options: NodeRuntimeOptions = {}): Promise<N
           if (runtime.status === "ONLINE") log(runtime, "ONLINE");
           setTimeout(() => void heartbeatLoop(), heartbeatInterval);
         } catch (error: unknown) {
+          if (error instanceof Error && error.message.startsWith("NODE_REVOKED")) {
+            runtime.status = "REVOKED";
+            log(runtime, "Node revoked by Control Plane");
+            log(runtime, "Stopping heartbeat");
+            return;
+          }
           runtime.status = "OFFLINE";
           console.error("[vwray-node] connection failed:", error instanceof Error ? error.message : String(error));
           setTimeout(() => void heartbeatLoop(), retryDelay);
@@ -325,10 +331,16 @@ export async function createRuntime(options: NodeRuntimeOptions = {}): Promise<N
 
       if (!response.ok) {
         const detail = await response.text();
+        if (detail.includes('"code":"NODE_REVOKED"')) {
+          runtime.status = "REVOKED";
+          throw new Error("NODE_REVOKED");
+        }
         if (response.status === 401 || response.status === 403) {
-          runtime.nodeId = null;
-          runtime.nodeToken = null;
-          runtime.status = "REGISTERING";
+          if (response.status === 401) {
+            await unlink(options.credentialPath ?? defaultCredentialPath()).catch(() => undefined);
+            runtime.nodeToken = null;
+          }
+          runtime.status = "OFFLINE";
         }
         throw new Error(`Heartbeat failed (${response.status}): ${detail}`);
       }

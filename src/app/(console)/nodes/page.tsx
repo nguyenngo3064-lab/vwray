@@ -28,7 +28,7 @@ export default function NodesPage() {
   const [protocol, setProtocol] = useState("");
   const [health, setHealth] = useState("");
   const [page, setPage] = useState(1);
-  const [acting, setActing] = useState<{ id: string; action: "rotateToken" | "remove"; note?: string } | null>(null);
+  const [acting, setActing] = useState<{ id: string; action: "rotateToken" | "revoke"; note?: string } | null>(null);
   const [reason, setReason] = useState("");
   const [registration, setRegistration] = useState({ name: "", location: "", publicEndpoint: "", port: "51820", protocol: "WIREGUARD" });
   const [issuedToken, setIssuedToken] = useState<string | null>(null);
@@ -44,7 +44,7 @@ export default function NodesPage() {
   });
 
   const totalNodes = list.meta.total;
-  const onlineCount = list.items?.filter((n) => n.health === "ONLINE").length ?? 0;
+  const onlineCount = list.items?.filter((n) => n.status === "ONLINE").length ?? 0;
 
   useEffect(() => {
     const source = new EventSource("/api/realtime/stream");
@@ -68,10 +68,9 @@ export default function NodesPage() {
         onDone: () => { setActing(null); setReason(""); list.refresh(); },
       });
     } else {
-      outcome = await mutation.run(`${NODES_BASE}/${id}`, {
-        method: "DELETE",
-        body: { reason },
-        successNote: "Node permanently removed.",
+      outcome = await mutation.run(`${NODES_BASE}/${id}?action=revoke`, {
+        method: "POST",
+        successNote: "Node revoked.",
         onDone: () => { setActing(null); setReason(""); list.refresh(); },
       });
     }
@@ -96,10 +95,10 @@ export default function NodesPage() {
   }
 
   const singleFields: ActionField[] = acting
-    ? [{ id: "reason", label: "Reason", kind: "textarea", value: reason, onChange: setReason, required: acting.action === "remove" }]
+    ? [{ id: "reason", label: "Reason", kind: "textarea", value: reason, onChange: setReason, required: acting.action === "revoke" }]
     : [];
 
-  const ready = !acting || (acting.action === "remove" ? reason.trim().length > 0 : true);
+  const ready = !acting || (acting.action === "revoke" ? reason.trim().length > 0 : true);
 
   return (
     <div className="space-y-4 p-4 lg:p-6">
@@ -203,13 +202,13 @@ export default function NodesPage() {
 
       <ActionModal
         open={acting !== null}
-        title={acting ? (acting.action === "rotateToken" ? "Rotate node token" : "Remove node") : ""}
-        description={acting?.action === "remove"
-          ? "The node is permanently removed. Connected devices lose access once the agent acknowledges the removal."
+        title={acting ? (acting.action === "rotateToken" ? "Rotate node token" : "Revoke node") : ""}
+        description={acting?.action === "revoke"
+          ? "The node is revoked and remains visible. Its current token stops working immediately."
           : "A new agent token is issued. Distribute it to the node operator out of band. The previous token stops working on the next heartbeat."}
         fields={singleFields}
-        submitLabel={acting?.action === "rotateToken" ? "Rotate token" : "Remove node"}
-        danger={acting?.action === "remove"}
+        submitLabel={acting?.action === "rotateToken" ? "Rotate token" : "Revoke node"}
+        danger={acting?.action === "revoke"}
         ready={ready}
         busy={mutation.busy}
         error={mutation.error}
@@ -224,7 +223,7 @@ export default function NodesPage() {
  * Table columns. The action column receives a callback instead of closing over the
  * page's state setter, so the array can stay module-level (no re-creation per render).
  */
-function nodeColumns(onAct: (action: "rotateToken" | "remove", id: string) => void): TableColumn<NodeRow>[] {
+function nodeColumns(onAct: (action: "rotateToken" | "revoke", id: string) => void): TableColumn<NodeRow>[] {
   return [
   {
     key: "name",
@@ -262,7 +261,7 @@ function nodeColumns(onAct: (action: "rotateToken" | "remove", id: string) => vo
     header: "Health",
     render: (row: NodeRow) => (
       <div className="inline-flex flex-col gap-0.5">
-        <StatusPill tone={healthTone(row.health)}>{row.health}</StatusPill>
+        <StatusPill tone={row.status === "REVOKED" ? "danger" : healthTone(row.health)}>{row.status === "REVOKED" ? row.status : row.health}</StatusPill>
         {row.healthReason && (
           <span className="text-[11px] text-muted leading-snug">{row.healthReason}</span>
         )}
@@ -304,8 +303,8 @@ function nodeColumns(onAct: (action: "rotateToken" | "remove", id: string) => vo
         <Button size="sm" onClick={() => onAct("rotateToken", row.id)}>
           Rotate token
         </Button>
-        <Button size="sm" variant="danger" onClick={() => onAct("remove", row.id)}>
-          Remove
+        <Button size="sm" variant="danger" onClick={() => onAct("revoke", row.id)}>
+          Revoke
         </Button>
       </span>
     ),

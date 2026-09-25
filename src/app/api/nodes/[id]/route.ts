@@ -198,16 +198,16 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
     }, { role: "ADMIN" })(request);
   }
 
-  if (action === "remove") {
+  if (action === "revoke") {
     return withConsole(async (_inner, ctx) => {
-      const { removeNode } = await import("@/server/nodes/service");
-      const removed = await removeNode({
+      const { revokeNode } = await import("@/server/nodes/service");
+      const revoked = await revokeNode({
         nodeId: id,
         actorId: ctx.session.user.id,
         actorLabel: ctx.session.user.username,
         sourceIp: ctx.sourceIp,
       });
-      return jsonOk({ id, ...removed }, { requestId: ctx.requestId });
+      return jsonOk({ id, ...revoked }, { requestId: ctx.requestId });
     }, { role: "ADMIN" })(request);
   }
 

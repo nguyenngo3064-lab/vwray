@@ -6,7 +6,7 @@ async function main() {
   const baseUrl = process.env.APP_URL ?? "http://localhost:3000";
   const response = await fetch(`${baseUrl}/api/auth/bootstrap`, { method: "POST" });
   const payload = (await response.json()) as {
-    data?: { created?: boolean; username?: string; accessCode?: string };
+    data?: { created?: boolean; username?: string };
     error?: { message?: string };
     requestId?: string;
   };
@@ -24,7 +24,7 @@ async function main() {
   }
 
   console.log(`Bootstrap complete. Username: ${payload.data.username}`);
-  console.log(`Access code (shown once): ${payload.data.accessCode}`);
+  console.log("Bootstrap complete. Use the configured DEFAULT_ACCESS_CODE to sign in.");
 }
 
 main().catch((error: unknown) => {

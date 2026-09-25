@@ -235,6 +235,7 @@ async function scoreNode(
     id: string;
     nodeId: string;
     name: string;
+    status: "REGISTERING" | "ONLINE" | "OFFLINE" | "DEGRADED" | "REVOKED";
     health: ReturnType<typeof deriveHealth>;
     activeSessions: number;
     weight: number;
@@ -290,7 +291,13 @@ async function scoreNode(
 
   let eligible = true;
   let ineligibleReason: string | null = null;
-  if (node.health === "OFFLINE") {
+  if (node.status === "REVOKED") {
+    eligible = false;
+    ineligibleReason = "Node has been revoked.";
+  } else if (node.status !== "ONLINE") {
+    eligible = false;
+    ineligibleReason = `Node is ${node.status}.`;
+  } else if (node.health === "OFFLINE") {
     eligible = false;
     ineligibleReason = "Node is OFFLINE.";
   } else if (node.health === "UNKNOWN") {
@@ -350,6 +357,7 @@ export async function getRoutingState(): Promise<RoutingState> {
           id: node.id,
           nodeId: node.nodeId,
           name: node.name,
+          status: node.status,
           health: deriveHealth({
             lastHeartbeatAt: node.lastHeartbeatAt,
             staleSeconds,

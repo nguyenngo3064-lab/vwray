@@ -11,6 +11,7 @@ export type ErrorCode =
   | "VALIDATION_ERROR"
   | "UNAUTHENTICATED"
   | "FORBIDDEN"
+  | "NODE_REVOKED"
   | "NOT_FOUND"
   | "CONFLICT"
   | "RATE_LIMITED"
@@ -28,6 +29,7 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   VALIDATION_ERROR: 422,
   UNAUTHENTICATED: 401,
   FORBIDDEN: 403,
+  NODE_REVOKED: 403,
   NOT_FOUND: 404,
   CONFLICT: 409,
   RATE_LIMITED: 429,
@@ -80,6 +82,7 @@ export const errors = {
   unauthenticated: (message = "Authentication required.") => new AppError("UNAUTHENTICATED", message),
   forbidden: (message = "You do not have permission to perform this action.") =>
     new AppError("FORBIDDEN", message),
+  nodeRevoked: () => new AppError("NODE_REVOKED", "Node has been revoked by the Control Plane."),
   notFound: (resource: string) => new AppError("NOT_FOUND", `${resource} was not found.`),
   conflict: (message: string, details?: Record<string, unknown>) => new AppError("CONFLICT", message, { details }),
   rateLimited: (message = "Too many attempts. Try again later.", retryAfterSeconds?: number) =>

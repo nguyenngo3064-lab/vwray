@@ -235,6 +235,7 @@ export interface NodeRow {
   publicEndpoint: string;
   port: number;
   protocol: NodeProtocol;
+  status: "REGISTERING" | "ONLINE" | "OFFLINE" | "DEGRADED" | "REVOKED";
   adapterKey: string;
   isRealGateway: boolean;
   health: NodeHealth;

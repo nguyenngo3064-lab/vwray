@@ -39,6 +39,7 @@ export type AuditAction =
   | "node.created"
   | "node.updated"
   | "node.removed"
+  | "node.revoked"
   | "node.token_rotated"
   | "node.draining"
   | "node.drain_started"

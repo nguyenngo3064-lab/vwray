@@ -93,6 +93,7 @@ async function gatewayStatus(): Promise<SystemStatus["gateway"]> {
         lastHeartbeatAt: true,
         maintenance: true,
         draining: true,
+        status: true,
         health: true,
       },
     });
@@ -112,6 +113,7 @@ async function gatewayStatus(): Promise<SystemStatus["gateway"]> {
     let lastHeartbeatAt: number | null = null;
 
     for (const node of nodes) {
+      if (node.status === "REVOKED") continue;
       const health = deriveHealth({
         lastHeartbeatAt: node.lastHeartbeatAt,
         staleSeconds,

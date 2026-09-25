@@ -23,6 +23,7 @@
     "db:reset": "prisma migrate reset --force",
     "gateway:dev": "tsx scripts/dev-gateway-collector.ts",
     "bootstrap": "tsx scripts/bootstrap.ts",
+    "admin:reset-access-code": "node scripts/reset-access-code.mjs",
     "node:dev": "tsx vwray-node/src/index.ts",
     "node:check": "tsc --project vwray-node/tsconfig.json --noEmit"
   },

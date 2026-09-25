@@ -6,6 +6,7 @@ import { Button, Field, Input } from "@/components/ui/primitives";
 
 type AuthState = {
   authenticated: boolean;
+  needsBootstrap: boolean;
 };
 
 export default function LoginPage() {
@@ -21,6 +22,9 @@ export default function LoginPage() {
         return (await response.json()) as { data: AuthState };
       })
       .then(({ data }) => {
+        if (data.needsBootstrap) {
+          setError("This installation is not bootstrapped. Run the bootstrap command on the server first.");
+        }
         if (data.authenticated) router.push("/devices");
       })
       .catch((caught: unknown) => {
@@ -40,10 +44,10 @@ export default function LoginPage() {
         body: JSON.stringify({ accessCode }),
       });
       const payload = (await response.json()) as { error?: { message?: string } };
-      if (!response.ok) throw new Error(payload.error?.message ?? "The access code is not valid.");
+      if (!response.ok) throw new Error(payload.error?.message ?? "Access code is invalid.");
       router.push("/devices");
     } catch (caught: unknown) {
-      setError(caught instanceof Error ? caught.message : "The access code is not valid.");
+      setError(caught instanceof Error ? caught.message : "Access code is invalid.");
     } finally {
       setSubmitting(false);
     }

@@ -162,7 +162,7 @@ export async function loginWithAccessCode(input: LoginInput): Promise<SessionCon
       metadata: { identifierHint: identifier, remaining: Math.max(0, limit.remaining - 1) },
     });
     // One message for every failure mode: never confirm whether a code exists.
-    throw errors.unauthenticated("The access code is not valid.");
+    throw errors.unauthenticated("Access code is invalid.");
   }
 
   const owner = matched.createdBy;

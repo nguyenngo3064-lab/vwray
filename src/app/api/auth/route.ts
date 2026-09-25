@@ -3,8 +3,7 @@ import { z } from "zod";
 import { jsonOk, withErrorHandling } from "@/server/http/respond";
 import { readJson, sourceIpOf } from "@/server/http/guard";
 import { getSession, loginWithAccessCode, logout } from "@/server/auth/service";
-import { ensureBootstrapOwner } from "@/server/auth/service";
-import { ensureSettingsSeeded } from "@/server/settings/service";
+import { errors } from "@/server/lib/errors";
 
 const loginSchema = z.object({
   accessCode: z.string().min(4).max(64),
@@ -42,8 +41,7 @@ export const POST = withErrorHandling(async (request: Request) => {
 
   const { prisma } = await import("@/server/db/client");
   if ((await prisma.adminUser.count()) === 0) {
-    await ensureBootstrapOwner();
-    await ensureSettingsSeeded();
+    throw errors.conflict("This installation is not bootstrapped. Run the bootstrap command on the server first.");
   }
 
   const session = await loginWithAccessCode({

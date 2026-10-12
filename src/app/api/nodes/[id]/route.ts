@@ -61,13 +61,12 @@ export const GET = withConsole(async (_request, ctx, extra: unknown) => {
     {
       node: {
         ...node,
-        lastHeartbeatAt: node.lastHeartbeatAt ? node.lastHeartbeatAt.toISOString() : null,
-        registeredAt: node.registeredAt.toISOString(),
-        healthReason: node.lastHeartbeatAt
+        lastHeartbeatAt: node.lastHeartbeatDate ? node.lastHeartbeatDate.toISOString() : null,
+        healthReason: node.lastHeartbeatDate
           ? "Derived from heartbeat freshness inside the staleness window."
           : "No heartbeat has ever been received; health cannot be confirmed.",
         derivedHealth: deriveHealth({
-          lastHeartbeatAt: node.lastHeartbeatAt,
+          lastHeartbeatAt: node.lastHeartbeatDate,
           staleSeconds,
           maintenance: node.maintenance,
           draining: node.draining,
@@ -145,6 +144,38 @@ export async function POST(request: Request, routeContext: { params: Promise<{ i
         { id, agentToken: rotated.agentToken, note: "The previous token stopped working immediately. Store the new one now." },
         { requestId: ctx.requestId },
       );
+    }, { role: "ADMIN" })(request);
+  }
+
+  if (action === "approve") {
+    return withConsole(async (_inner, ctx) => {
+      const { approveNode } = await import("@/server/nodes/service");
+      const result = await approveNode({
+        nodeId: id,
+        actorId: ctx.session.user.id,
+        actorLabel: ctx.session.user.username,
+        sourceIp: ctx.sourceIp,
+      });
+      return jsonOk(result, { requestId: ctx.requestId });
+    }, { role: "ADMIN" })(request);
+  }
+
+  if (action === "reject") {
+    return withConsole(async (innerRequest, ctx) => {
+      const { reason: reasonFromBody } = (await readJson(innerRequest)) as { reason?: string };
+      const reason = (reasonFromBody ?? "").trim();
+      if (reason.length < 3) {
+        throw errors.validation("A rejection reason of at least 3 characters is required.");
+      }
+      const { rejectNode } = await import("@/server/nodes/service");
+      const result = await rejectNode({
+        nodeId: id,
+        reason,
+        actorId: ctx.session.user.id,
+        actorLabel: ctx.session.user.username,
+        sourceIp: ctx.sourceIp,
+      });
+      return jsonOk(result, { requestId: ctx.requestId });
     }, { role: "ADMIN" })(request);
   }
 

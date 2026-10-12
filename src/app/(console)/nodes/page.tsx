@@ -28,7 +28,8 @@ export default function NodesPage() {
   const [protocol, setProtocol] = useState("");
   const [health, setHealth] = useState("");
   const [page, setPage] = useState(1);
-  const [acting, setActing] = useState<{ id: string; action: "rotateToken" | "revoke"; note?: string } | null>(null);
+  const [approval, setApproval] = useState("");
+  const [acting, setActing] = useState<{ id: string; action: "approve" | "reject" | "rotateToken" | "revoke"; note?: string } | null>(null);
   const [reason, setReason] = useState("");
   const [registration, setRegistration] = useState({ name: "", location: "", publicEndpoint: "", port: "51820", protocol: "WIREGUARD" });
   const [issuedToken, setIssuedToken] = useState<string | null>(null);
@@ -39,6 +40,7 @@ export default function NodesPage() {
     search: search || undefined,
     protocol: protocol || undefined,
     health: health || undefined,
+    approval: approval || undefined,
     page,
     pageSize: PAGE_SIZE,
   });
@@ -65,6 +67,19 @@ export default function NodesPage() {
         method: "POST",
         body: { reason },
         successNote: "Node token rotated.",
+        onDone: () => { setActing(null); setReason(""); list.refresh(); },
+      });
+    } else if (acting.action === "approve") {
+      outcome = await mutation.run(`${NODES_BASE}/${id}?action=approve`, {
+        method: "POST",
+        successNote: "Node approved.",
+        onDone: () => { setActing(null); setReason(""); list.refresh(); },
+      });
+    } else if (acting.action === "reject") {
+      outcome = await mutation.run(`${NODES_BASE}/${id}?action=reject`, {
+        method: "POST",
+        body: { reason },
+        successNote: "Node rejected.",
         onDone: () => { setActing(null); setReason(""); list.refresh(); },
       });
     } else {
@@ -95,10 +110,13 @@ export default function NodesPage() {
   }
 
   const singleFields: ActionField[] = acting
-    ? [{ id: "reason", label: "Reason", kind: "textarea", value: reason, onChange: setReason, required: acting.action === "revoke" }]
+    ? acting.action === "reject"
+      ? [{ id: "reason", label: "Rejection reason", kind: "textarea", value: reason, onChange: setReason, required: true }]
+      : [{ id: "reason", label: "Reason", kind: "textarea", value: reason, onChange: setReason, required: acting.action === "revoke" }]
     : [];
 
-  const ready = !acting || (acting.action === "revoke" ? reason.trim().length > 0 : true);
+  const ready = !acting
+    || (acting.action === "revoke" || acting.action === "reject" ? reason.trim().length > 0 : true);
 
   return (
     <div className="space-y-4 p-4 lg:p-6">
@@ -132,6 +150,16 @@ export default function NodesPage() {
             <option value="DEGRADED">Degraded</option>
             <option value="OFFLINE">Offline</option>
             <option value="UNKNOWN">Unknown</option>
+          </Select>
+          <Select
+            value={approval}
+            onChange={(e) => { setApproval(e.target.value); setPage(1); }}
+            aria-label="Filter by approval"
+          >
+            <option value="">All approvals</option>
+            <option value="PENDING">Pending</option>
+            <option value="APPROVED">Approved</option>
+            <option value="REJECTED">Rejected</option>
           </Select>
         </div>
       </div>
@@ -223,7 +251,7 @@ export default function NodesPage() {
  * Table columns. The action column receives a callback instead of closing over the
  * page's state setter, so the array can stay module-level (no re-creation per render).
  */
-function nodeColumns(onAct: (action: "rotateToken" | "revoke", id: string) => void): TableColumn<NodeRow>[] {
+function nodeColumns(onAct: (action: "approve" | "reject" | "rotateToken" | "revoke", id: string) => void): TableColumn<NodeRow>[] {
   return [
   {
     key: "name",
@@ -269,6 +297,36 @@ function nodeColumns(onAct: (action: "rotateToken" | "revoke", id: string) => vo
     ),
   },
   {
+    key: "approval",
+    header: "Approval",
+    render: (row: NodeRow) => (
+      <div className="inline-flex flex-col gap-0.5">
+        <StatusPill
+          tone={row.approvalState === "APPROVED" ? "success" : row.approvalState === "REJECTED" ? "danger" : "warning"}
+        >
+          {row.approvalState}
+        </StatusPill>
+        {row.approvalState === "REJECTED" && row.rejectionReason ? (
+          <span className="text-[11px] text-muted leading-snug">{row.rejectionReason}</span>
+        ) : null}
+      </div>
+    ),
+  },
+  {
+    key: "wireguard",
+    header: "WireGuard",
+    render: (row: NodeRow) => (
+      <div className="inline-flex flex-col gap-0.5">
+        <StatusPill tone={row.wireguardState === "READY" ? "success" : row.wireguardState === "DOWN" ? "danger" : "neutral"}>
+          {`WIREGUARD_${row.wireguardState}`}
+        </StatusPill>
+        {row.wireguardStateReason ? (
+          <span className="text-[11px] text-muted leading-snug">{row.wireguardStateReason}</span>
+        ) : null}
+      </div>
+    ),
+  },
+  {
     key: "sessions",
     header: "Sessions",
     align: "right" as const,
@@ -300,6 +358,16 @@ function nodeColumns(onAct: (action: "rotateToken" | "revoke", id: string) => vo
     align: "right" as const,
     render: (row: NodeRow) => (
       <span className="flex justify-end gap-1.5">
+        {row.approvalState === "PENDING" ? (
+          <>
+            <Button size="sm" variant="primary" onClick={() => onAct("approve", row.id)}>
+              Approve
+            </Button>
+            <Button size="sm" onClick={() => onAct("reject", row.id)}>
+              Reject
+            </Button>
+          </>
+        ) : null}
         <Button size="sm" onClick={() => onAct("rotateToken", row.id)}>
           Rotate token
         </Button>

@@ -6,7 +6,7 @@ async function main() {
   const baseUrl = process.env.APP_URL ?? "http://localhost:3000";
   const response = await fetch(`${baseUrl}/api/auth/bootstrap`, { method: "POST" });
   const payload = (await response.json()) as {
-    data?: { created?: boolean; username?: string };
+    data?: { created?: boolean; username?: string; passwordSet?: boolean };
     error?: { message?: string };
     requestId?: string;
   };
@@ -24,7 +24,14 @@ async function main() {
   }
 
   console.log(`Bootstrap complete. Username: ${payload.data.username}`);
-  console.log("Bootstrap complete. Use the configured DEFAULT_ACCESS_CODE to sign in.");
+  if (payload.data.passwordSet) {
+    console.log("Bootstrap complete. The OWNER_PASSWORD from the environment is set; sign in with it.");
+  } else {
+    console.log(
+      "Bootstrap complete. Sign in with the access code shown above (or the configured DEFAULT_ACCESS_CODE), " +
+        "then set an operator password from the console.",
+    );
+  }
 }
 
 main().catch((error: unknown) => {

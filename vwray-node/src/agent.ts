@@ -10,6 +10,7 @@ import {
   detectCapabilities,
   detectPort,
   detectPublicEndpoint,
+  detectWireGuardState,
   readEnv,
   resolveNodeProtocol,
 } from "./config.js";
@@ -311,16 +312,14 @@ export async function createRuntime(options: NodeRuntimeOptions = {}): Promise<N
 
       runtime.status = "HEARTBEAT";
       const heartbeatUrl = new URL("/api/gateway/heartbeat", runtime.controlPlaneUrl).toString();
-      const payload = {
-        version: "vwray-node/0.1.0",
-        agentVersion: "0.1.0",
-        cpuPercent: 0,
-        ramPercent: 0,
-        bandwidthMbps: 0,
-        activeSessions: 0,
-        latencyMs: 0,
-        jitterMs: 0,
-        packetLossPct: 0,
+      // Only observed facts are reported. Previously this payload sent zeros for
+      // cpu/ram/bandwidth/sessions, which is fabricated telemetry; omitted fields
+      // simply stay unset on the control plane.
+      const env = readEnv();
+      const payload: Record<string, unknown> = {
+        version: "vwray-node/0.2.0",
+        agentVersion: "0.2.0",
+        wireguard: detectWireGuardState(env.WG_INTERFACE?.trim() || "wg0"),
       };
 
       const response = await fetch(heartbeatUrl, {

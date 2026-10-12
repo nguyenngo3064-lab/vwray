@@ -46,6 +46,17 @@ const secret = (name: string, minLength: number) =>
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   APP_URL: z.string().default("http://localhost:3000"),
+  /**
+   * Optional operator override for the public hostname of the control plane when
+   * the platform does not provide one (or a custom domain fronts it). Host or
+   * host:port only — no scheme, no path.
+   */
+  PUBLIC_HOSTNAME: optionalString,
+  /**
+   * Optional comma-separated override for the outbound-IP detection endpoints.
+   * Each entry must be https on the default port (validated; see discovery.ts).
+   */
+  IP_DETECT_URLS: optionalString,
   WEBSOCKET_URL: optionalString,
 
   DATABASE_URL: secret("DATABASE_URL", 12),
@@ -54,7 +65,28 @@ const envSchema = z.object({
 
   AUTH_SECRET: secret("AUTH_SECRET", 32),
   ENCRYPTION_KEY: secret("ENCRYPTION_KEY", 24),
-  DEFAULT_ACCESS_CODE: z.string().min(4).default("admin9785"),
+  /**
+   * Optional first-boot access code. When absent the bootstrap generates a
+   * high-entropy code and shows it exactly once (response in dev, server log in
+   * production). There is deliberately NO weak default: an installation that
+   * forgets this variable gets a random code, never a guessable one.
+   */
+  DEFAULT_ACCESS_CODE: z
+    .string()
+    .optional()
+    .transform((value) => (value && value.trim().length >= 4 ? value.trim() : undefined)),
+  /**
+   * Optional first-boot owner password. When present at bootstrap it is hashed
+   * into the owner account so the dashboard can be reached with a password on
+   * the very first login. Must be strong when set.
+   */
+  OWNER_PASSWORD: z
+    .string()
+    .optional()
+    .transform((value) => (value && value.length > 0 ? value : undefined))
+    .refine((value) => value === undefined || value.length >= 12, {
+      message: "OWNER_PASSWORD must be at least 12 characters when set.",
+    }),
   NODE_ENROLLMENT_TOKEN: optionalString,
   SESSION_ABSOLUTE_TTL_MINUTES: intString(720, 5, 60 * 24 * 90),
   SESSION_IDLE_TTL_MINUTES: intString(120, 1, 60 * 24 * 30),

@@ -236,9 +236,16 @@ export interface NodeRow {
   port: number;
   protocol: NodeProtocol;
   status: "REGISTERING" | "ONLINE" | "OFFLINE" | "DEGRADED" | "REVOKED";
+  approvalState: "PENDING" | "APPROVED" | "REJECTED";
+  approvedAt: string | null;
+  rejectionReason: string | null;
   adapterKey: string;
   isRealGateway: boolean;
   health: NodeHealth;
+  wireguardState: "UNKNOWN" | "READY" | "DOWN";
+  wireguardStateReason: string | null;
+  wireguardStateAt: string | null;
+  capabilities: { agentOnline: boolean; wireguardReady: boolean; vpnReachable: "UNVERIFIED" };
   storedHealth: string;
   version: string | null;
   agentVersion: string | null;

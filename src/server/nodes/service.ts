@@ -68,48 +68,79 @@ export async function listNodes(filters?: {
   search?: string;
   protocol?: string;
   health?: string;
+  approval?: string;
 }) {
   const staleSeconds = await getSetting<number>("nodes.heartbeatStaleSeconds");
   const nodes = await prisma.vpnNode.findMany({ orderBy: { name: "asc" } });
 
-  const annotated = nodes.map((node) => ({
-    id: node.id,
-    nodeId: node.nodeId,
-    name: node.name,
-    status: node.status,
-    location: node.location,
-    provider: node.provider,
-    publicEndpoint: node.publicEndpoint,
-    port: node.port,
-    protocol: node.protocol,
-    adapterKey: node.adapterKey,
-    isRealGateway: node.isRealGateway,
-    health: deriveHealth({
+  const annotated = nodes.map((node) => {
+    const derivedHealth = deriveHealth({
       lastHeartbeatAt: node.lastHeartbeatAt,
       staleSeconds,
       maintenance: node.maintenance,
       draining: node.draining,
-    }),
-    storedHealth: node.health,
-    version: node.version,
-    agentVersion: node.agentVersion,
-    cpuPercent: node.cpuPercent,
-    ramPercent: node.ramPercent,
-    bandwidthMbps: node.bandwidthMbps,
-    activeSessions: node.activeSessions,
-    maxSessions: node.maxSessions,
-    weight: node.weight,
-    draining: node.draining,
-    maintenance: node.maintenance,
-    lastHeartbeatAt: node.lastHeartbeatAt,
-    registeredAt: node.registeredAt,
-    tokenHint: node.agentTokenHint,
-  }));
+    });
+    const agentOnline = derivedHealth === "ONLINE" || derivedHealth === "DEGRADED";
+    // A WireGuard report older than twice the staleness window is no longer
+    // evidence of anything: fall back to UNKNOWN instead of trusting it forever.
+    const wireguardFresh =
+      node.wireguardStateAt !== null &&
+      Date.now() - node.wireguardStateAt.getTime() < staleSeconds * 2 * 1000;
+    return {
+      id: node.id,
+      nodeId: node.nodeId,
+      name: node.name,
+      status: node.status,
+      approvalState: node.approvalState,
+      approvedAt: node.approvedAt ? node.approvedAt.toISOString() : null,
+      rejectionReason: node.rejectionReason,
+      location: node.location,
+      provider: node.provider,
+      publicEndpoint: node.publicEndpoint,
+      port: node.port,
+      protocol: node.protocol,
+      adapterKey: node.adapterKey,
+      isRealGateway: node.isRealGateway,
+      health: derivedHealth,
+      wireguardState: wireguardFresh ? node.wireguardState : ("UNKNOWN" as const),
+      wireguardStateReason: wireguardFresh ? node.wireguardStateReason : null,
+      wireguardStateAt: wireguardFresh && node.wireguardStateAt ? node.wireguardStateAt.toISOString() : null,
+      /**
+       * Three separate liveness claims, never collapsed into one "ONLINE":
+       *   * agentOnline      — authenticated heartbeat inside the staleness window;
+       *   * wireguardReady   — the agent reported the interface UP recently;
+       *   * vpnReachable     — requires an external probe, which does not exist yet,
+       *                        so it is always UNVERIFIED.
+       */
+      capabilities: {
+        agentOnline,
+        wireguardReady: wireguardFresh && node.wireguardState === "READY",
+        vpnReachable: "UNVERIFIED" as const,
+      },
+      storedHealth: node.health,
+      version: node.version,
+      agentVersion: node.agentVersion,
+      cpuPercent: node.cpuPercent,
+      ramPercent: node.ramPercent,
+      bandwidthMbps: node.bandwidthMbps,
+      activeSessions: node.activeSessions,
+      maxSessions: node.maxSessions,
+      weight: node.weight,
+      draining: node.draining,
+      maintenance: node.maintenance,
+      lastHeartbeatAt: node.lastHeartbeatAt ? node.lastHeartbeatAt.toISOString() : null,
+      registeredAt: node.registeredAt.toISOString(),
+      updatedAt: node.updatedAt.toISOString(),
+      tokenHint: node.agentTokenHint,
+      lastHeartbeatDate: node.lastHeartbeatAt,
+    };
+  });
 
   const search = filters?.search?.trim().toLowerCase();
   return annotated.filter((node) => {
     if (filters?.protocol && node.protocol !== filters.protocol) return false;
     if (filters?.health && node.health !== filters.health) return false;
+    if (filters?.approval && node.approvalState !== filters.approval) return false;
     if (search && ![node.name, node.nodeId, node.location, node.publicEndpoint]
       .some((value) => value.toLowerCase().includes(search))) return false;
     return true;
@@ -243,6 +274,79 @@ async function createNodeTokenFor(id: string, nodeId: string) {
     data: { agentTokenHash: sha256Hex(token), agentTokenHint: `${token.slice(0, 9)}...${token.slice(-4)}` },
   });
   return { token };
+}
+
+/**
+ * Operator approval / rejection of a node.
+ *
+ * A self-registered node starts PENDING: its agent may heartbeat (so the console
+ * can show "registered, waiting for approval"), but a REJECTED node loses agent
+ * authentication entirely. Both transitions are audited with the operator identity.
+ */
+export async function approveNode(input: {
+  nodeId: string;
+  actorId: string;
+  actorLabel: string;
+  sourceIp?: string | null;
+}): Promise<{ id: string; approvalState: "APPROVED" }> {
+  const node = await prisma.vpnNode.findUnique({ where: { id: input.nodeId } });
+  if (!node) throw errors.notFound("Node");
+  if (node.status === "REVOKED") throw errors.invalidState("A revoked node cannot be approved.");
+
+  const updated = await prisma.vpnNode.update({
+    where: { id: node.id },
+    data: {
+      approvalState: "APPROVED",
+      approvedAt: new Date(),
+      approvedById: input.actorId,
+      rejectionReason: null,
+    },
+  });
+
+  await record({
+    actor: { type: "USER", id: input.actorId, label: input.actorLabel },
+    action: "node.approved",
+    resource: "vpn_node",
+    resourceId: node.id,
+    result: "SUCCESS",
+    sourceIp: input.sourceIp,
+    metadata: { nodeId: node.nodeId, name: node.name },
+  });
+
+  return { id: updated.id, approvalState: "APPROVED" };
+}
+
+export async function rejectNode(input: {
+  nodeId: string;
+  reason: string;
+  actorId: string;
+  actorLabel: string;
+  sourceIp?: string | null;
+}): Promise<{ id: string; approvalState: "REJECTED" }> {
+  const node = await prisma.vpnNode.findUnique({ where: { id: input.nodeId } });
+  if (!node) throw errors.notFound("Node");
+
+  const updated = await prisma.vpnNode.update({
+    where: { id: node.id },
+    data: {
+      approvalState: "REJECTED",
+      rejectionReason: input.reason.slice(0, 500),
+      approvedAt: null,
+      approvedById: null,
+    },
+  });
+
+  await record({
+    actor: { type: "USER", id: input.actorId, label: input.actorLabel },
+    action: "node.rejected",
+    resource: "vpn_node",
+    resourceId: node.id,
+    result: "SUCCESS",
+    sourceIp: input.sourceIp,
+    metadata: { nodeId: node.nodeId, name: node.name, reason: input.reason.slice(0, 500) },
+  });
+
+  return { id: updated.id, approvalState: "REJECTED" };
 }
 
 /** Rotates a node token: the old one stops working immediately. */
@@ -409,6 +513,12 @@ export async function applyHeartbeat(
     packetLossPct?: number | null;
     version?: string | null;
     agentVersion?: string | null;
+    /**
+     * Agent-reported WireGuard interface state. Accepted only as an agent OBSERVATION:
+     * the control plane stores it with a timestamp and never treats the report alone
+     * as proof the tunnel is reachable from the Internet.
+     */
+    wireguard?: { state: "READY" | "DOWN" | "UNKNOWN"; reason?: string | null } | null;
   },
   options?: { source?: "REAL" | "MOCK"; at?: Date },
 ) {
@@ -416,8 +526,18 @@ export async function applyHeartbeat(
   const previous = await prisma.vpnNode.findUnique({ where: { id: nodeId } });
   if (!previous) return;
   if (previous.status === "REVOKED") throw errors.nodeRevoked();
+  if (previous.approvalState === "REJECTED") {
+    throw errors.forbidden("This node was rejected by an operator and cannot report telemetry.");
+  }
 
   const at = options?.at ?? new Date();
+  const wireguardUpdate = input.wireguard
+    ? {
+        wireguardState: input.wireguard.state,
+        wireguardStateReason: (input.wireguard.reason ?? null)?.slice(0, 300) ?? null,
+        wireguardStateAt: at,
+      }
+    : {};
 
   const updated = await prisma.vpnNode.update({
     where: { id: nodeId },
@@ -429,7 +549,10 @@ export async function applyHeartbeat(
       version: input.version ?? undefined,
       agentVersion: input.agentVersion ?? undefined,
       lastHeartbeatAt: at,
-      status: "ONLINE",
+      ...wireguardUpdate,
+      // A PENDING node keeps its REGISTERING status: a running agent process is
+      // evidence of registration, not of an approved, serviceable node.
+      status: previous.approvalState === "APPROVED" ? "ONLINE" : previous.status,
     },
   });
 

@@ -81,6 +81,23 @@ enum NodeStatus {
   REVOKED
 }
 
+/// Operator decision about a node. A node that self-registered stays PENDING
+/// until an operator approves it; REJECTED nodes cannot authenticate at all.
+enum NodeApprovalState {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// WireGuard interface state as REPORTED BY THE AGENT (and only accepted while
+/// the agent's heartbeat is fresh). UNKNOWN means "never reported" — it is never
+/// silently promoted to READY.
+enum WireGuardState {
+  UNKNOWN
+  READY
+  DOWN
+}
+
 enum NodeProtocol {
   WIREGUARD
   XRAY_VLESS
@@ -386,6 +403,18 @@ model VpnNode {
   status         NodeStatus      @default(REGISTERING)
   health         NodeHealthState @default(UNKNOWN)
 
+  /// Approval lifecycle. Existing rows are backfilled to APPROVED by the
+  /// migration so an upgrade never locks out a fleet that was already running.
+  approvalState     NodeApprovalState @default(PENDING)
+  approvedAt        DateTime?
+  approvedById      String?
+  rejectionReason   String?
+  /// Agent-reported WireGuard state + why + when. Refreshed by heartbeats; stale
+  /// reports fall back to UNKNOWN instead of being trusted indefinitely.
+  wireguardState       WireGuardState @default(UNKNOWN)
+  wireguardStateReason String?
+  wireguardStateAt     DateTime?
+
   /// SHA-256 of the node's agent token. Plaintext is returned once at creation.
   agentTokenHash   String
   agentTokenHint   String
@@ -428,6 +457,7 @@ model VpnNode {
 
   @@index([health])
   @@index([status])
+  @@index([approvalState])
   @@index([lastHeartbeatAt])
   @@index([draining])
   @@map("vpn_node")
@@ -571,6 +601,9 @@ model DeviceCredential {
   secretSealed String?
   /// Deterministic key id so rotation can be traced without exposing material.
   keyRef String?
+  /// Allocated tunnel address for WireGuard peers (e.g. `10.200.0.2`). Unique among
+  /// active credentials so two devices can never claim the same tunnel IP.
+  tunnelAddress String? @unique
 
   createdAt  DateTime  @default(now())
   createdById String?

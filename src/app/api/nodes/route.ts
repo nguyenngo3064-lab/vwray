@@ -10,6 +10,7 @@ export const GET = withConsole(async (_request, ctx) => {
     search: ctx.url.searchParams.get("search") ?? undefined,
     protocol: ctx.url.searchParams.get("protocol") ?? undefined,
     health: ctx.url.searchParams.get("health") ?? undefined,
+    approval: ctx.url.searchParams.get("approval") ?? undefined,
   });
   const annotated = nodes.map((node) => ({ ...node, healthReason: healthReasonOf(node) }));
   return jsonOk(annotated, {
@@ -33,10 +34,13 @@ const createSchema = z.object({
 
 function healthReasonOf(node: {
   health: string;
-  lastHeartbeatAt: Date | null;
+  lastHeartbeatAt: string | null;
   draining: boolean;
   maintenance: boolean;
+  approvalState?: string;
 }): string {
+  if (node.approvalState === "PENDING") return "Node is registered and waiting for operator approval.";
+  if (node.approvalState === "REJECTED") return "Node was rejected by an operator and cannot serve traffic.";
   if (node.maintenance) return "Node is in maintenance mode.";
   if (node.draining) return "Node is draining: no new sessions are accepted.";
   if (!node.lastHeartbeatAt) return "No heartbeat has ever been received from this node.";

@@ -143,6 +143,22 @@ export const SETTING_DEFINITIONS = [
     schema: booleanish,
     defaultValue: true,
   }),
+  define({
+    key: "vpn.tunnelMode",
+    category: "VPN",
+    description:
+      "AllowedIPs written into generated WireGuard profiles. FULL routes all client traffic through the VPN (0.0.0.0/0, ::/0). SPLIT routes only private ranges and the VPN subnet, so ordinary internet traffic bypasses the tunnel.",
+    schema: z.enum(["FULL", "SPLIT"]),
+    defaultValue: "FULL",
+    impact: "FULL tunnel requires NAT + IP forwarding on the VPN node host and enough bandwidth for all client traffic.",
+  }),
+  define({
+    key: "vpn.clientDns",
+    category: "VPN",
+    description: "DNS server written into generated WireGuard profiles. Empty means the client keeps its own resolver.",
+    schema: z.string().max(256),
+    defaultValue: "1.1.1.1",
+  }),
 
   // ---------------------------------------------------------------- nodes ----
   define({

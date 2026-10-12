@@ -2,11 +2,13 @@ import "server-only";
 import { z } from "zod";
 import { jsonOk, withErrorHandling } from "@/server/http/respond";
 import { readJson, sourceIpOf } from "@/server/http/guard";
-import { getSession, loginWithAccessCode, logout } from "@/server/auth/service";
+import { getSession, loginWithAccessCode, loginWithPassword, logout } from "@/server/auth/service";
 import { errors } from "@/server/lib/errors";
 
 const loginSchema = z.object({
-  accessCode: z.string().min(4).max(64),
+  accessCode: z.string().min(4).max(64).optional(),
+  username: z.string().min(1).max(80).optional(),
+  password: z.string().min(1).max(200).optional(),
 });
 
 /**
@@ -31,12 +33,22 @@ export const GET = withErrorHandling(async () => {
   });
 });
 
-/** Access-code login. */
+/**
+ * Login. Accepts either credential:
+ *   * `{ username, password }`  — the primary way into the dashboard, or
+ *   * `{ accessCode }`          — the installation access code issued at bootstrap.
+ * Both paths run through the same rate-limit ledger, generic failure message and
+ * audit trail; the response never says which half of a credential was wrong.
+ */
 export const POST = withErrorHandling(async (request: Request) => {
   const parsed = loginSchema.safeParse(await readJson(request));
   if (!parsed.success) {
-    const { errors } = await import("@/server/lib/errors");
-    throw errors.validation("An access code is required.");
+    throw errors.validation("A username with password, or an access code, is required.");
+  }
+
+  const { username, password, accessCode } = parsed.data;
+  if (!password && !accessCode) {
+    throw errors.validation("A username with password, or an access code, is required.");
   }
 
   const { prisma } = await import("@/server/db/client");
@@ -44,11 +56,12 @@ export const POST = withErrorHandling(async (request: Request) => {
     throw errors.conflict("This installation is not bootstrapped. Run the bootstrap command on the server first.");
   }
 
-  const session = await loginWithAccessCode({
-    accessCode: parsed.data.accessCode,
-    ip: sourceIpOf(request),
-    userAgent: request.headers.get("user-agent"),
-  });
+  const ip = sourceIpOf(request);
+  const userAgent = request.headers.get("user-agent");
+
+  const session = password
+    ? await loginWithPassword({ username: username ?? "", password, ip, userAgent })
+    : await loginWithAccessCode({ accessCode: accessCode as string, ip, userAgent });
 
   return jsonOk({
     user: session.user,

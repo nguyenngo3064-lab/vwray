@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 
 export type SupportedNodeProtocol =
   | "WIREGUARD"
@@ -69,4 +70,48 @@ export function createNodeName(env: Record<string, string | undefined> = process
   const explicit = env.NODE_NAME?.trim();
   if (explicit) return explicit;
   return `vwray-node-${randomUUID().slice(0, 8)}`;
+}
+
+export interface WireGuardReport {
+  state: "READY" | "DOWN" | "UNKNOWN";
+  reason: string;
+}
+
+export interface HostProbe {
+  existsSync(path: string): boolean;
+  readFileSync(path: string, encoding: "utf8"): string;
+}
+
+/**
+ * Observes the local WireGuard interface WITHOUT root and WITHOUT running `wg`.
+ *
+ * Evidence ladder (nothing is ever claimed beyond what can be seen):
+ *   * interface absent from /sys/class/net  -> DOWN (it does not exist here);
+ *   * interface present, carrier = 1        -> READY (link is up);
+ *   * interface present, carrier unreadable -> UNKNOWN (need privileges; do not guess).
+ *
+ * The control plane timestamps this report and only surfaces WIREGUARD_READY while
+ * it is fresh; a running agent process alone never proves the tunnel works.
+ */
+export function detectWireGuardState(
+  iface = "wg0",
+  probe: HostProbe = { existsSync, readFileSync },
+): WireGuardReport {
+  if (!/^[A-Za-z0-9_.-]{1,15}$/.test(iface)) {
+    return { state: "UNKNOWN", reason: "interface name is not a valid Linux interface name" };
+  }
+  const sysPath = `/sys/class/net/${iface}`;
+  if (!probe.existsSync(sysPath)) {
+    return { state: "DOWN", reason: `interface ${iface} does not exist on this host` };
+  }
+  try {
+    const carrier = probe.readFileSync(`${sysPath}/carrier`, "utf8").trim();
+    if (carrier === "1") return { state: "READY", reason: `interface ${iface} is up (carrier detected)` };
+    return { state: "DOWN", reason: `interface ${iface} exists but reports no carrier` };
+  } catch {
+    return {
+      state: "UNKNOWN",
+      reason: `interface ${iface} exists; carrier state unreadable without elevated privileges`,
+    };
+  }
 }

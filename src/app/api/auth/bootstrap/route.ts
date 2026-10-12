@@ -52,5 +52,6 @@ export const POST = withErrorHandling(async (request: Request) => {
     created: true,
     username: result.username,
     accessCode: result.accessCode,
+    passwordSet: result.passwordSet,
   });
 });

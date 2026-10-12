@@ -28,6 +28,17 @@ const bodySchema = z.object({
   agentVersion: z.string().max(40).optional(),
   /** Highest policy revision the agent has applied; lets the control plane detect drift. */
   appliedRevision: z.number().int().min(0).optional(),
+  /**
+   * Agent's observation of its own WireGuard interface. Stored with a timestamp and
+   * surfaced as WIREGUARD_READY only while fresh; it never proves the tunnel is
+   * reachable from the Internet (that would need an external probe).
+   */
+  wireguard: z
+    .object({
+      state: z.enum(["READY", "DOWN", "UNKNOWN"]),
+      reason: z.string().max(300).optional().nullable(),
+    })
+    .optional(),
 });
 
 export const POST = withErrorHandling(async (request: Request) => {
@@ -54,6 +65,7 @@ export const POST = withErrorHandling(async (request: Request) => {
     nodeId: node.nodeId,
     receivedAt: new Date().toISOString(),
     health: heartbeat?.health ?? "UNKNOWN",
+    approvalState: node.approvalState,
     staleSeconds,
     /** Agent must re-pull when this is greater than its appliedRevision. */
     policyRevision: pendingRevision,

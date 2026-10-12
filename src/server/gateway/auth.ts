@@ -78,6 +78,10 @@ export async function authenticateAgent(request: Request): Promise<AgentAuthResu
     throw errors.nodeRevoked();
   }
 
+  if (node.approvalState === "REJECTED") {
+    throw errors.forbidden("This node was rejected by an operator and may not authenticate.");
+  }
+
   if (!safeEqual(sha256Hex(token), node.agentTokenHash)) {
     throw errors.unauthenticated("Gateway token is not valid.");
   }

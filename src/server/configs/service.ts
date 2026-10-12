@@ -1,5 +1,6 @@
 import "server-only";
 import { generateKeyPairSync } from "node:crypto";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/client";
 import { errors } from "@/server/lib/errors";
 import { record } from "@/server/audit";
@@ -92,6 +93,7 @@ function renderWireGuard(input: {
   dns: string | null;
   keepalive: number;
   presharedKey?: string | null;
+  allowedIps: string;
 }): string {
   const lines = [
     "[Interface]",
@@ -103,10 +105,46 @@ function renderWireGuard(input: {
   if (input.presharedKey) lines.push(`PresharedKey = ${input.presharedKey}`);
   lines.push(
     `Endpoint = ${input.endpoint}:${input.port}`,
-    "AllowedIPs = 0.0.0.0/0, ::/0",
+    `AllowedIPs = ${input.allowedIps}`,
     `PersistentKeepalive = ${input.keepalive}`,
   );
   return `${lines.join("\n")}\n`;
+}
+
+/**
+ * WireGuard client address pool (per node data plane). Hosts .2-.254 are
+ * allocatable; .0/.1 are reserved for the network and the gateway.
+ */
+const WG_POOL_PREFIX = "10.200.0";
+
+/** SPLIT mode routes only private ranges + the VPN subnet; FULL routes everything. */
+export function allowedIpsFor(mode: "FULL" | "SPLIT"): string {
+  if (mode === "SPLIT") {
+    return `${WG_POOL_PREFIX}.0/24, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10`;
+  }
+  return "0.0.0.0/0, ::/0";
+}
+
+/**
+ * Picks the lowest free tunnel address in the pool. Allocation happens inside the
+ * caller's transaction while a PostgreSQL advisory lock serialises concurrent
+ * generators, and the unique constraint on `tunnelAddress` stays as the backstop,
+ * so two devices can never be handed the same address.
+ */
+async function allocateTunnelAddress(client: Prisma.TransactionClient | typeof prisma = prisma): Promise<string> {
+  const used = await client.deviceCredential.findMany({
+    where: { kind: "WIREGUARD_KEYPAIR", revokedAt: null, tunnelAddress: { not: null } },
+    select: { tunnelAddress: true },
+  });
+  const taken = new Set(used.map((row) => row.tunnelAddress));
+  for (let host = 2; host <= 254; host += 1) {
+    const candidate = `${WG_POOL_PREFIX}.${host}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  throw errors.invalidState(
+    `The WireGuard client address pool ${WG_POOL_PREFIX}.0/24 is exhausted. ` +
+      "Revoke credentials for decommissioned devices before issuing new ones.",
+  );
 }
 
 /** Renders one Xray client as the documented URI form for its protocol. */
@@ -238,6 +276,14 @@ export async function generateConfig(input: {
   let publicCredential = "";
   let credentialKind: "WIREGUARD_KEYPAIR" | "XRAY_UUID" = "XRAY_UUID";
   let secretToSeal = "";
+  let tunnelAddress: string | null = null;
+  /** Kept until the transaction so the payload is rendered with the final address. */
+  let wireguardMaterial: {
+    privateKey: string;
+    serverPublicKey: string;
+    allowedIps: string;
+    dns: string | null;
+  } | null = null;
 
   if (input.protocol === "WIREGUARD") {
     credentialKind = "WIREGUARD_KEYPAIR";
@@ -263,15 +309,16 @@ export async function generateConfig(input: {
       presentedPublicKey: publicCredential,
     });
 
-    payload = renderWireGuard({
-      address: "10.200.0.2/32",
+    const [tunnelMode, clientDns] = await Promise.all([
+      getSetting<"FULL" | "SPLIT">("vpn.tunnelMode"),
+      getSetting<string>("vpn.clientDns"),
+    ]);
+    wireguardMaterial = {
       privateKey: privateCredential,
       serverPublicKey,
-      endpoint: node.publicEndpoint,
-      port: node.port,
-      dns: "1.1.1.1",
-      keepalive: 25,
-    });
+      allowedIps: allowedIpsFor(tunnelMode === "SPLIT" ? "SPLIT" : "FULL"),
+      dns: clientDns && clientDns.length > 0 ? clientDns : null,
+    };
 
     if (!capabilities.generateConfig) {
       throw errors.unsupported("This gateway does not support configuration generation.");
@@ -301,24 +348,46 @@ export async function generateConfig(input: {
   }
 
   const fingerprint = fingerprintOf(publicCredential);
-  const checksum = sha256Hex(payload);
+  let checksum = sha256Hex(payload);
   const resolvedExpiresAt =
     input.expiresAt ?? (expiryDays > 0 ? new Date(Date.now() + expiryDays * 86_400_000) : null);
 
   // Credential + versions + assignment in one transaction, so the console can never
-  // hold a config row that points at a credential that was never stored.
+  // hold a config row that points at a credential that was never stored. For
+  // WireGuard the tunnel address is allocated and the payload rendered INSIDE this
+  // transaction under an advisory lock, so concurrent generators cannot collide.
   const { config, version } = await prisma.$transaction(async (tx) => {
+    if (wireguardMaterial) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('vwray-wg-pool'))`;
+      tunnelAddress = await allocateTunnelAddress(tx);
+      payload = renderWireGuard({
+        address: `${tunnelAddress}/32`,
+        privateKey: wireguardMaterial.privateKey,
+        serverPublicKey: wireguardMaterial.serverPublicKey,
+        endpoint: node.publicEndpoint,
+        port: node.port,
+        dns: wireguardMaterial.dns,
+        keepalive: 25,
+        allowedIps: wireguardMaterial.allowedIps,
+      });
+      checksum = sha256Hex(payload);
+      if (payload.length > MAX_PAYLOAD_BYTES) {
+        throw errors.internal("The rendered configuration exceeded the size limit.");
+      }
+    }
+
     await tx.deviceCredential.create({
-      data: {
-        deviceId: device.id,
-        kind: credentialKind,
-        publicKey: publicCredential,
-        fingerprint,
-        secretSealed: sealSecret(secretToSeal),
-        nodeId: node.id,
-        expiresAt: resolvedExpiresAt,
-      },
-    });
+          data: {
+            deviceId: device.id,
+            kind: credentialKind,
+            publicKey: publicCredential,
+            fingerprint,
+            secretSealed: sealSecret(secretToSeal),
+            nodeId: node.id,
+            expiresAt: resolvedExpiresAt,
+            ...(tunnelAddress ? { tunnelAddress } : {}),
+          },
+        });
 
     const created = await tx.vpnConfig.create({
       data: {

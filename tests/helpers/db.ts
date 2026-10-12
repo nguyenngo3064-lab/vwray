@@ -101,6 +101,8 @@ export async function seedFixture(overrides?: {
       port: 51820,
       protocol: "WIREGUARD",
       health: "ONLINE",
+      approvalState: "APPROVED",
+      approvedAt: new Date(),
       agentTokenHash: "unused-in-tests",
       agentTokenHint: "test...node",
       adapterKey: "wireguard",

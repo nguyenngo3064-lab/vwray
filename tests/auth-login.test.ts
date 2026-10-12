@@ -1,3 +1,6 @@
+import { execFileSync, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -24,6 +27,8 @@ vi.mock("next/headers", () => ({
 
 import { prisma } from "@/server/db/client";
 import { getEnv } from "@/server/config/env";
+import { proxy } from "@/proxy";
+import { GET as getAuthStatus } from "@/app/api/auth/route";
 import { hashSecret, verifySecret } from "@/server/lib/crypto";
 import {
   changeOwnPassword,
@@ -35,7 +40,7 @@ import {
 } from "@/server/auth/service";
 import { resetDatabase } from "./helpers/db";
 
-const PASSWORD = "correct-horse-battery-staple-99";
+const PASSWORD = randomBytes(24).toString("base64url");
 
 async function createOwner(password: string | null): Promise<{ userId: string }> {
   const user = await prisma.adminUser.create({
@@ -134,6 +139,19 @@ describe("password login", () => {
   });
 });
 
+describe("console authentication boundary", () => {
+  it("redirects anonymous dashboard requests to login", () => {
+    const response = proxy(new NextRequest("https://vwray.example/devices"));
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toContain("/login");
+  });
+
+  it("does not accept a forged session cookie", async () => {
+    jar.set("vwray_session", "forged-session-token");
+    expect(await getSession()).toBeNull();
+  });
+});
+
 describe("password change", () => {
   it("requires the current password and revokes every session", async () => {
     const { userId } = await createOwner(PASSWORD);
@@ -199,5 +217,52 @@ describe("bootstrap", () => {
       expect(outcome.accessCode).not.toBe("ADMIN9785");
     }
   });
-});
 
+  it("is idempotent and does not create a duplicate owner or access code", async () => {
+    const first = await ensureBootstrapOwner();
+    expect(first.created).toBe(true);
+
+    const second = await ensureBootstrapOwner();
+    expect(second.created).toBe(false);
+    expect(await prisma.adminUser.count()).toBe(1);
+    expect(await prisma.accessCode.count()).toBe(1);
+  });
+
+  it("bootstraps through the production CLI, preserves credentials on rerun, and supports password login", async () => {
+    const runBootstrap = () =>
+      execFileSync(
+        "npm",
+        ["run", "bootstrap"],
+        {
+          encoding: "utf8",
+          env: { ...process.env, OWNER_PASSWORD: PASSWORD },
+        },
+      );
+
+    const missingPassword = spawnSync("npm", ["run", "bootstrap"], {
+      encoding: "utf8",
+      env: { ...process.env, OWNER_PASSWORD: "" },
+    });
+    expect(missingPassword.status).toBe(1);
+    expect(missingPassword.stderr).toContain("OWNER_PASSWORD must be configured");
+    expect(await prisma.adminUser.count()).toBe(0);
+
+    const firstOutput = runBootstrap();
+    expect(firstOutput).toContain("Bootstrap complete for owner.");
+    expect(firstOutput).not.toContain(PASSWORD);
+
+    const secondOutput = runBootstrap();
+    expect(secondOutput).toContain("Bootstrap skipped: an operator account already exists.");
+    expect(secondOutput).not.toContain(PASSWORD);
+    expect(await prisma.adminUser.count()).toBe(1);
+    expect(await prisma.accessCode.count()).toBe(1);
+    const statusResponse = await getAuthStatus(new Request("https://vwray.example/api/auth"));
+    const statusPayload = await statusResponse.json();
+    expect(statusPayload.data.needsBootstrap).toBe(false);
+
+    await loginWithPassword({ username: "owner", password: PASSWORD });
+    await expect(loginWithPassword({ username: "owner", password: "definitely-wrong-password" })).rejects.toMatchObject({
+      code: "UNAUTHENTICATED",
+    });
+  });
+});

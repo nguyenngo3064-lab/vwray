@@ -10,23 +10,26 @@ VWRAY is a control plane. WireGuard/Xray data-plane traffic runs on a separate g
 
 ```text
 NODE_ENV=production
-APP_URL=https://your-public-domain
+APP_URL=https://vwray-production.up.railway.app
 DATABASE_URL=${{Postgres.DATABASE_URL}}
 AUTH_SECRET=<random secret, 32+ characters>
 ENCRYPTION_KEY=<random secret, 24+ characters>
+OWNER_PASSWORD=<secret, at least 12 characters>
 WIREGUARD_SERVER_PUBLIC_KEY=<public key of the gateway wg0 interface>
 ALLOW_BOOTSTRAP_CODE_RETRIEVAL=false
 RUN_MIGRATIONS_ON_START=true
 ```
 
-4. Deploy and wait for `/api/health` to return a healthy response.
-5. Run the first bootstrap from a protected server shell. The first access code is printed once:
+4. Deploy and wait for `/api/health` to return a healthy response. The Docker entrypoint runs committed Prisma migrations before starting the app.
+5. From a protected terminal authenticated to the production project/environment, use a checkout of the deployed revision with `npm ci` completed, then run the bootstrap against the web service's variables:
 
 ```bash
-npm run bootstrap
+railway run --service <web-service-name> npm run bootstrap
 ```
 
-Do not put the access code, agent token, private key, or `DATABASE_URL` in the browser or in a public repository.
+`railway run` executes the checked-out CLI locally while injecting the selected web service's environment; it does not open a shell in the running container. The command creates the owner with the configured `OWNER_PASSWORD`. It does not print credentials, contact a public bootstrap endpoint, or modify an existing operator's password. Keep `ALLOW_BOOTSTRAP_CODE_RETRIEVAL=false`; the deployment does not need to enable a public credential-retrieval route.
+
+Do not put the owner password, agent token, private key, or `DATABASE_URL` in the browser or in a public repository.
 
 ## Render
 
@@ -61,9 +64,9 @@ Approved devices and online nodes appear in **Configurations**. Generate a profi
 | `NODE_ENV` | yes | control plane | `production` enables `Secure` cookies and refuses mock gateways. |
 | `APP_URL` | recommended | control plane | Public origin of the control plane (CSRF origin checks, client links). |
 | `PUBLIC_HOSTNAME` | optional | control plane | Operator override for the public hostname when the platform does not provide one. Host or `host:port` only, no scheme, no path. |
-| `DEFAULT_ACCESS_CODE` | optional | control plane | First-boot access code (4+ chars). When unset a random 20-character code is generated and printed once. |
-| `OWNER_PASSWORD` | optional | control plane | First-boot owner password (12+ chars) so the dashboard can be entered with a password on the first login. |
-| `ALLOW_BOOTSTRAP_CODE_RETRIEVAL` | optional | control plane | Keep `false` in production; the code is printed to the server log exactly once instead. |
+| `DEFAULT_ACCESS_CODE` | optional | control plane | First-boot access code for the development-only retrieval route (4+ chars); never printed by production bootstrap. |
+| `OWNER_PASSWORD` | required for a new CLI bootstrap | control plane | First-boot owner password (12+ chars). The bootstrap command refuses to create an account without it and never prints it. |
+| `ALLOW_BOOTSTRAP_CODE_RETRIEVAL` | optional | control plane | Keep `false` in production; enables access-code retrieval only for development bootstrap. |
 | `NODE_ENROLLMENT_TOKEN` | required once | VPN node | Shared secret an agent presents when self-registering (`POST /api/nodes/register`). Rotate after onboarding. |
 | `WIREGUARD_SERVER_PUBLIC_KEY` | required for client profiles | VPN node | Public key of the gateway `wg0` interface. |
 | `PORT` | platform-provided | control plane | Railway assigns it. Never hardcoded; the container reads it at start. |
@@ -75,20 +78,26 @@ Approved devices and online nodes appear in **Configurations**. Generate a profi
 
 ## First login (control plane)
 
-1. Set `AUTH_SECRET`, `ENCRYPTION_KEY`, `DATABASE_URL`, `NODE_ENV=production`.
-2. Deploy with `RUN_MIGRATIONS_ON_START=true` and wait for `/api/health` to report `ok`.
-3. From a protected server shell, run the first bootstrap:
+1. Set `AUTH_SECRET`, `ENCRYPTION_KEY`, `DATABASE_URL`, `NODE_ENV=production`, `APP_URL=https://vwray-production.up.railway.app`, and `OWNER_PASSWORD` (at least 12 characters) in the Railway web service environment.
+2. Deploy with `RUN_MIGRATIONS_ON_START=true` and wait for `/api/health` to report `ok`. Do not run the bootstrap against a different database or environment.
+3. From a protected terminal linked to the production project/environment, run:
 
    ```bash
-   npm run bootstrap                                   # prints the access code once
-   # or, with a password ready for the first login:
-   OWNER_PASSWORD='<12+ characters>' npm run bootstrap
+   railway run --service <web-service-name> npm run bootstrap
    ```
 
-4. Open `https://<control-plane-domain>/login`, sign in with `owner` + password (or the access code via the secondary form).
-5. Set a password if you bootstrapped with an access code only, then sign out and sign back in with the password.
+   `tsx` and the Prisma CLI are production dependencies and are included in the runtime image. `railway run` executes the checked-out script with the selected service's variables, so use the same revision as the healthy deployment. The script calls the existing Prisma/auth services directly; it does not call `/api/auth/bootstrap`, which remains locked in production. If the command reports that an operator already exists, it preserves all credentials and seeds only missing default settings. Running it again does not create another owner.
+4. Open `https://vwray-production.up.railway.app/login` and sign in as `owner` with the configured `OWNER_PASSWORD`. Confirm the console loads; `GET /api/auth` should report `needsBootstrap: false` and the authenticated session should report role `OWNER`.
 
 Every unauthenticated page request is redirected to `/login`; the console layout re-verifies the session against the database on every render, and every mutating API call additionally requires the CSRF header and the right role.
+
+### Bootstrap recovery and safety
+
+- A failed first attempt can be rerun after correcting the reported configuration or database problem. Owner creation is transactional; the command never overwrites a password or deletes rows. It also seeds any missing default settings when an operator already exists, so a retry can finish that independent setup work.
+- If an owner already exists, do not delete it or reset the database to make bootstrap run. Sign in with its existing credential; use the authenticated password-change flow when appropriate.
+- `DATABASE_URL` must point to the intended Railway PostgreSQL service. Never substitute a new database URL just to make bootstrap succeed.
+- Keep production code retrieval disabled. Do not print or paste passwords, access codes, connection strings, or tokens into logs, support tickets, or source control.
+- If the build previously reported `tsx: not found`, deploy this revision: `tsx` and `prisma` are runtime dependencies and are installed by the Docker production install. Run bootstrap only after the deployment is healthy.
 
 ## Deploying the VPN node agent
 

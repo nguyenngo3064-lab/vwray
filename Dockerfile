@@ -15,7 +15,7 @@ ENV AUTH_SECRET=build-only-auth-secret-not-used-at-runtime
 ENV ENCRYPTION_KEY=build-only-encryption-key-not-used-at-runtime
 COPY . .
 RUN npx prisma generate
-RUN npm run build -- --webpack
+RUN npm run build
 
 FROM node:22-alpine AS runner
 WORKDIR /app
@@ -29,7 +29,9 @@ COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/src/server ./src/server
 COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
+COPY --from=builder /app/tsconfig.json ./tsconfig.json
 COPY --from=builder /app/docker/entrypoint.sh ./docker/entrypoint.sh
 RUN chmod +x ./docker/entrypoint.sh
 EXPOSE 3000

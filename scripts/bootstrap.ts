@@ -1,40 +1,59 @@
-async function main() {
-  if (typeof process.loadEnvFile === "function") {
-    process.loadEnvFile(".env");
+import { existsSync } from "node:fs";
+
+if (typeof process.loadEnvFile === "function" && existsSync(".env")) {
+  process.loadEnvFile(".env");
+}
+
+const SENSITIVE_ENV_NAME = /(?:DATABASE_URL|PASSWORD|SECRET|TOKEN|ACCESS_CODE|API_KEY|ENCRYPTION_KEY|PRIVATE_KEY)/i;
+
+function safeErrorMessage(error: unknown): string {
+  let message = error instanceof Error ? error.message : "Unknown error.";
+
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value && SENSITIVE_ENV_NAME.test(name)) {
+      message = message.replaceAll(value, `[redacted ${name}]`);
+    }
   }
 
-  const baseUrl = process.env.APP_URL ?? "http://localhost:3000";
-  const response = await fetch(`${baseUrl}/api/auth/bootstrap`, { method: "POST" });
-  const payload = (await response.json()) as {
-    data?: { created?: boolean; username?: string; passwordSet?: boolean };
-    error?: { message?: string };
-    requestId?: string;
-  };
+  return message.replace(/\bpostgres(?:ql)?:\/\/[^\s"'`]+/gi, "[redacted database URL]");
+}
 
-  if (!response.ok) {
-    const requestId = payload.requestId ? ` (request ${payload.requestId})` : "";
-    throw new Error(
-      `${payload.error?.message ?? `Bootstrap request failed with HTTP ${response.status}.`}${requestId}`,
-    );
-  }
+async function main(): Promise<void> {
+  let prisma: (typeof import("@/server/db/client"))["prisma"] | undefined;
 
-  if (!payload.data?.created) {
-    console.log("Bootstrap skipped: an operator account already exists.");
-    return;
-  }
+  try {
+    const { getEnv } = await import("@/server/config/env");
+    const env = getEnv();
+    const db = await import("@/server/db/client");
+    prisma = db.prisma;
 
-  console.log(`Bootstrap complete. Username: ${payload.data.username}`);
-  if (payload.data.passwordSet) {
-    console.log("Bootstrap complete. The OWNER_PASSWORD from the environment is set; sign in with it.");
-  } else {
+    const existingUsers = await prisma.adminUser.count();
+    if (existingUsers === 0 && !env.OWNER_PASSWORD) {
+      throw new Error(
+        "OWNER_PASSWORD must be configured (12+ characters) before bootstrapping a new installation.",
+      );
+    }
+
+    const { ensureBootstrapOwner } = await import("@/server/auth/service");
+    const result = await ensureBootstrapOwner();
+    const seededSettings = await (await import("@/server/settings/service")).ensureSettingsSeeded();
+
+    if (!result.created) {
+      console.log(
+        `Bootstrap skipped: an operator account already exists. Credentials were not changed; seeded ${seededSettings} missing settings.`,
+      );
+      return;
+    }
+
     console.log(
-      "Bootstrap complete. Sign in with the access code shown above (or the configured DEFAULT_ACCESS_CODE), " +
-        "then set an operator password from the console.",
+      `Bootstrap complete for ${result.username}. Sign in with the configured OWNER_PASSWORD; seeded ${seededSettings} settings.`,
     );
+  } finally {
+    await prisma?.$disconnect();
   }
 }
 
 main().catch((error: unknown) => {
-  console.error("Bootstrap failed:", error instanceof Error ? error.message : error);
+  console.error("Bootstrap failed:", safeErrorMessage(error));
   process.exitCode = 1;
 });

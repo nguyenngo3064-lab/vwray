@@ -305,9 +305,9 @@ model AdminUser {
   @@map("admin_user")
 }
 
-/// Rotating login credential. The plaintext code is shown exactly once (server
-/// logs on first boot, or the creation response) and only its scrypt hash is
-/// persisted.
+/// Rotating login credential. The plaintext code is returned only by the explicitly
+/// enabled development bootstrap route or an authenticated rotation response; only
+/// its scrypt hash is persisted.
 model AccessCode {
   id          String     @id @default(cuid())
   label       String

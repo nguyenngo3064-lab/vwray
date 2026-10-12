@@ -11,7 +11,6 @@ import {
   verifySecret,
 } from "@/server/lib/crypto";
 import { generateAccessCode, hintFor, randomToken, safeEqual } from "@/server/lib/ids";
-import { logger } from "@/server/lib/logger";
 import { recordAuthAttempt, checkAuthRateLimit } from "@/server/auth/rate-limit";
 import { record, userActor } from "@/server/audit";
 import {
@@ -27,9 +26,8 @@ import {
  * Threat model summary:
  *   * Credentials are never stored in plaintext. Access codes and passwords are
  *     scrypt hashes; session tokens are SHA-256 digests.
- *   * The first-boot access code is printed once to the server log and is not
- *     recoverable afterwards. If it is lost, an operator rotates it from a live
- *     session.
+ *   * The first-boot access code is returned only by the explicitly enabled
+ *     development retrieval route and is never written to logs.
  *   * Sessions live server-side and are revoked, not merely expired client-side.
  *   * Failed attempts are recorded and rate limited per credential and per IP.
  */
@@ -55,16 +53,16 @@ export function roleAtLeast(role: AdminRole, required: AdminRole): boolean {
  * First-boot bootstrap.
  *
  * Creates the owner account and one high-entropy access code when the installation
- * has no users at all. The plaintext code is returned exactly once so the caller can
- * print it to the server log.
+ * has no users at all. The plaintext code is returned only to the gated retrieval
+ * route; production bootstrap authenticates with OWNER_PASSWORD.
  *
  * Hardening:
  *   * No weak default. Without `DEFAULT_ACCESS_CODE` a 20-character CSPRNG code is
  *     generated instead of falling back to anything guessable.
  *   * Optional `OWNER_PASSWORD` is hashed (scrypt) into the owner account so the
  *     dashboard can be entered with a password on the first login.
- *   * In production the code is printed to the server log exactly once, because the
- *     HTTP retrieval route is locked there; in development the caller also receives it.
+ *   * The plaintext code is returned only to the explicitly enabled development
+ *     retrieval route; production bootstrap uses OWNER_PASSWORD and never logs it.
  */
 export async function ensureBootstrapOwner(): Promise<
   { created: true; accessCode: string; username: string; passwordSet: boolean } | { created: false }
@@ -100,18 +98,6 @@ export async function ensureBootstrapOwner(): Promise<
     });
     return created;
   });
-
-  // Production cannot retrieve the code from the locked bootstrap route, so the
-  // server log is the single moment the plaintext exists outside the operator's
-  // hands. It is never written to the database, the audit trail or a response body
-  // in production.
-  if (!env.ALLOW_BOOTSTRAP_CODE_RETRIEVAL) {
-    logger.warn("first-boot access code generated (shown once)", {
-      username,
-      accessCode,
-      note: "Store it now: only its hash is persisted, it cannot be recovered, only rotated.",
-    });
-  }
 
   await record({
     actor: { type: "SYSTEM", id: null, label: "bootstrap" },

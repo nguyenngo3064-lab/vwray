@@ -67,8 +67,8 @@ const envSchema = z.object({
   ENCRYPTION_KEY: secret("ENCRYPTION_KEY", 24),
   /**
    * Optional first-boot access code. When absent the bootstrap generates a
-   * high-entropy code and shows it exactly once (response in dev, server log in
-   * production). There is deliberately NO weak default: an installation that
+   * high-entropy code and makes it available only through the gated development
+   * retrieval route. There is deliberately NO weak default: an installation that
    * forgets this variable gets a random code, never a guessable one.
    */
   DEFAULT_ACCESS_CODE: z

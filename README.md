@@ -146,15 +146,15 @@ Dashboard: **http://localhost:3000**
 
 ### First-boot
 
-Khi database trống, control plane tự động tạo owner account + access code lần đầu. Access code được in ra server log và không thể lấy lại sau đó.
+Khi database chưa có operator, chạy bootstrap bằng `OWNER_PASSWORD` (tối thiểu 12 ký tự) đã cấu hình trong môi trường Railway. Mật khẩu được hash bằng scrypt; bootstrap không in password, access code hoặc database credentials ra terminal/log.
 
-Lấy code:
+Từ checkout đúng revision đã deploy (đã chạy `npm ci`) và terminal Railway đã xác thực với đúng project/environment:
 
 ```bash
-npm run bootstrap   # tsx scripts/bootstrap.ts
+railway run --service <web-service-name> npm run bootstrap
 ```
 
-> Production: vô hiệu hóa ALLOW_BOOTSTRAP_CODE_RETRIEVAL=false và lấy code từ log.
+Bootstrap có thể chạy lại an toàn: nếu operator đã tồn tại, thông tin xác thực hiện tại không bị thay đổi; script chỉ bổ sung các cấu hình mặc định còn thiếu. Giữ `ALLOW_BOOTSTRAP_CODE_RETRIEVAL=false` trong production. `npm run bootstrap` chạy `node --conditions=react-server --import=tsx scripts/bootstrap.ts`.
 
 ---
 
@@ -165,7 +165,7 @@ npm run bootstrap   # tsx scripts/bootstrap.ts
 | Phương thức | Đường dẫn | Ghi chú |
 | --- | --- | --- |
 | GET | /api/auth | Trạng thái: needsBootstrap, authenticated, user |
-| POST | /api/auth | Login access code (body: { accessCode }) |
+| POST | /api/auth | Đăng nhập bằng username/password hoặc access code |
 | POST | /api/auth/bootstrap | Lấy access code lần đầu (ALLOW_BOOTSTRAP_CODE_RETRIEVAL=true) |
 | POST | /api/auth/logout | Đăng xuất |
 

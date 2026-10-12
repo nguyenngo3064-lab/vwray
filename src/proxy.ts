@@ -48,12 +48,14 @@ export function safeNextPath(pathname: string, search = ""): string {
   return `${pathname}${search}`;
 }
 
+const SESSION_COOKIE_NAME = SESSION_COOKIE;
+
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
 
   if (!isProtected(pathname)) return NextResponse.next();
 
-  const hasSessionCookie = Boolean(request.cookies.get(SESSION_COOKIE)?.value);
+  const hasSessionCookie = Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value);
   if (hasSessionCookie) return NextResponse.next();
 
   const login = new URL("/login", request.url);
